@@ -108,9 +108,9 @@ For direct host execution:
 
 ## 📜 Credits & Technology
 Fetchy is built on the shoulders of these incredible open-source projects:
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — The engine for media extraction.
-- [discord.py](https://github.com/Rapptz/discord.py) — The interface for Discord interactions.
-- [FFmpeg](https://ffmpeg.org/) — The power behind media conversion and merging.
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — The engine for media extraction!
+- [discord.py](https://github.com/Rapptz/discord.py) — The interface for Discord interactions!
+- [FFmpeg](https://ffmpeg.org/) — The power behind media conversion and merging!
 
 ---
 *Developed with ❤️ by [CRZX1337](https://github.com/CRZX1337/Fetchy)*
