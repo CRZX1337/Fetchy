@@ -47,10 +47,10 @@ class MediaBot(commands.Bot):
                 title="📥 Media Downloader Dashboard",
                 description=(
                     "Willkommen am Kontrollzentrum!\n\n"
-                    "Hier bleibt alles für immer 100% anonym und sauber. Klicke einfach auf den "
-                    "**grünen Button unten**, füge deine Video-URL ein und schreibe rein, "
-                    "ob du es als `video`, `audio` oder `thumbnail` möchtest.\n\n"
-                    "*(Deine Downloads laden sicher im Hintergrund und werden dir komplett unsichtbar (ephemeral) zurückgesendet!)*"
+                    "Hier bleibt alles für immer 100% anonym und sauber. Klicke einfach auf einen der "
+                    "**drei Buttons unten**, um das gewünschte Format (Video, Audio oder Thumbnail) "
+                    "zu wählen und füge dann deine Video-URL ein.\n\n"
+                    "*(Deine Downloads laden kollisionsfrei im Hintergrund und werden dir komplett unsichtbar (ephemeral) zurückgesendet!)*"
                 ),
                 color=discord.Color.blurple()
             )

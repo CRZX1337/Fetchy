@@ -7,7 +7,11 @@ from downloader import download_media
 
 logger = logging.getLogger("MediaBot")
 
-class DownloadModal(discord.ui.Modal, title='Medien Link eingeben'):
+class DownloadModal(discord.ui.Modal):
+    def __init__(self, format_type: str):
+        super().__init__(title='Medien Link eingeben')
+        self.format_type = format_type
+
     # Text-Input für die Quelle
     url_input = discord.ui.TextInput(
         label='Video- / Audio-URL',
@@ -15,30 +19,10 @@ class DownloadModal(discord.ui.Modal, title='Medien Link eingeben'):
         placeholder='https://www...',
         required=True
     )
-    
-    # Neues Text-Input zur Formatwahl als String
-    format_input = discord.ui.TextInput(
-        label='Format (video / audio / thumbnail)',
-        style=discord.TextStyle.short,
-        placeholder='Tippe z.B. "video", "audio" oder "thumbnail"',
-        required=True
-    )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # 1. Format Validierung 
-        raw_format = self.format_input.value.strip().lower()
-        valid_formats = ["video", "audio", "thumbnail"]
+        raw_format = self.format_type
         
-        if raw_format not in valid_formats:
-            embed = discord.Embed(
-                title="❌ Ungültiges Format",
-                description=f"Du hast `{raw_format}` eingegeben.\nBitte nutze nur exakt: **video**, **audio** oder **thumbnail**.",
-                color=discord.Color.red()
-            )
-            # Ephemeral Error werfen
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
         # 2. Ephemeral Response ("Bitte Warten" Status)
         embed = discord.Embed(
             title=f"⏳ Lade {raw_format.capitalize()} herunter...",
@@ -53,11 +37,11 @@ class DownloadModal(discord.ui.Modal, title='Medien Link eingeben'):
             url = self.url_input.value
             file_path = await asyncio.to_thread(download_media, url, raw_format)
             
-            # 4. Limit Checking für 25MB
+            # 4. Limit Checking für 10MB
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            if file_size_mb > 25:
+            if file_size_mb > 10.0:
                 embed.title = "❌ Download fehlgeschlagen"
-                embed.description = f"Die Datei ist **{file_size_mb:.2f} MB** groß.\nDas Discord Upload-Limit liegt bei 25 MB."
+                embed.description = f"Die Datei ist **{file_size_mb:.2f} MB** groß.\nDas Discord Upload-Limit liegt bei 10 MB."
                 embed.color = discord.Color.red()
                 await interaction.edit_original_response(embed=embed, attachments=[])
             else:
@@ -90,7 +74,14 @@ class DashboardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         
-    @discord.ui.button(label="📥 Neues Medium herunterladen", style=discord.ButtonStyle.green, custom_id="persistent_dashboard_btn")
-    async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Öffnet das Modal, welches dann wiederum alles Ephemeral erledigt
-        await interaction.response.send_modal(DownloadModal())
+    @discord.ui.button(label="🎥 Video (MP4)", style=discord.ButtonStyle.primary, custom_id="persistent_dashboard_btn_video")
+    async def btn_video(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(DownloadModal(format_type="video"))
+
+    @discord.ui.button(label="🎵 Audio (MP3)", style=discord.ButtonStyle.success, custom_id="persistent_dashboard_btn_audio")
+    async def btn_audio(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(DownloadModal(format_type="audio"))
+
+    @discord.ui.button(label="🖼️ Thumbnail (PNG)", style=discord.ButtonStyle.secondary, custom_id="persistent_dashboard_btn_thumbnail")
+    async def btn_thumbnail(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(DownloadModal(format_type="thumbnail"))
