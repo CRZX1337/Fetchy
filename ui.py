@@ -267,12 +267,8 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
                     embed.description = f"⬇️ `[{bar}]` **{pct}%**\n{size_str}{speed_str}"
                 elif phase == "PROCESSING":
                     embed.description = "⚙️ Processing file..."
-            else:
-                mapping = {
-                    "SEARCHING": "🔍 Locating media...",
-                    "PROCESSING": "⚙️ Processing file...",
-                }
-                embed.description = mapping.get(payload, "Working...")
+                elif phase == "SEARCHING":
+                    embed.description = "🔍 Locating media..."
             try:
                 await interaction.edit_original_response(embed=embed)
             except Exception:

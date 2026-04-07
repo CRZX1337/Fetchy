@@ -125,7 +125,7 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
 
     try:
         if status_hook is not None:
-            status_hook("SEARCHING")
+            status_hook({"phase": "SEARCHING"})
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             result = ydl.extract_info(url, download=True)
