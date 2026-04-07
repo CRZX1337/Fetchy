@@ -71,7 +71,7 @@ class MediaBot(commands.Bot):
                     "1. Select a **format** below (Video, Audio, or Picture).\n"
                     "2. Provide the **source link** in the secure input field.\n"
                     "3. Relax while I process and deliver your requested file! 🚀\n\n\n"
-                    "✨ **Key Benefits:** High Performance • Secure Processing • Zero Tracking\n"
+                    "✨ **Key Benefits:** High Performance • Secure Processing • Zero Tracking\n\n"
                     "🖥️ **Source Code:** [GitHub Repository](https://github.com/CRZX1337/Fetchy)"
                 ),
                 color=discord.Color.blurple()
