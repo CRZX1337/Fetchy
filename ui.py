@@ -59,8 +59,78 @@ async def start_analysis(interaction: discord.Interaction, url: str, format_requ
         view = AudioFormatView(url, trigger_message_id, prompt_message_id)
         await interaction.edit_original_response(content=f"🎵 **Found:** *{title_short}*\nSelect Audio Format:", view=view)
     elif format_requested == "picture":
+        if "instagram.com/p/" in url:
+            entries = await asyncio.to_thread(downloader.get_instagram_carousel, url)
+            if len(entries) > 1:
+                view = InstagramCarouselView(url, entries, trigger_message_id, prompt_message_id)
+                await interaction.edit_original_response(content=f"📸 **Found Instagram Carousel:** {len(entries)} Photos\nSelect a photo or download them all:", view=view)
+                return
+
         view = PictureFormatView(url, trigger_message_id, prompt_message_id)
         await interaction.edit_original_response(content=f"🖼️ **Found:** *{title_short}*\nSelect Image Format:", view=view)
+
+class InstagramCarouselView(discord.ui.View):
+    """View for selecting photos from an Instagram carousel."""
+    def __init__(self, url: str, entries: list, trigger_message_id=None, prompt_message_id=None):
+        super().__init__(timeout=300)
+        self.url = url
+        self.entries = entries
+        self.trigger_message_id = trigger_message_id
+        self.prompt_message_id = prompt_message_id
+
+        # Limit to 20 entries to ensure we have room for the "Download All" button (Max 25 items)
+        display_entries = self.entries[:20]
+        for entry in display_entries:
+            i = entry['index']
+            btn = discord.ui.Button(
+                label=f"📷 Photo {i}",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"ig_photo_{i}",
+                row=(i-1) // 5
+            )
+            btn.callback = self.create_callback(i)
+            self.add_item(btn)
+
+        all_btn = discord.ui.Button(
+            label="⬇️ Download All",
+            style=discord.ButtonStyle.success,
+            custom_id="ig_download_all",
+            row=(min(len(display_entries), 20)) // 5
+        )
+        all_btn.callback = self.download_all_callback
+        self.add_item(all_btn)
+
+    def create_callback(self, index):
+        async def callback(interaction: discord.Interaction):
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"⌛ Downloading Photo {index}...", ephemeral=True)
+            
+            files = await downloader.download_instagram_photo(self.url, index=index)
+            if files:
+                await interaction.followup.send(content=f"✨ **Photo {index}** ready!", file=discord.File(files[0]), ephemeral=True)
+                if os.path.exists(files[0]):
+                    os.remove(files[0])
+            else:
+                await interaction.followup.send("❌ Failed to download photo. The link may have expired.", ephemeral=True)
+        return callback
+
+    async def download_all_callback(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            await interaction.response.send_message(f"⌛ Downloading all {len(self.entries)} photos...", ephemeral=True)
+        
+        files = await downloader.download_instagram_photo(self.url)
+        if files:
+            discord_files = [discord.File(f) for f in files]
+            # Send in batches of 10 (Discord limit)
+            for i in range(0, len(discord_files), 10):
+                batch = discord_files[i:i+10]
+                await interaction.followup.send(content=f"✨ **Batch {i//10 + 1}** of photos ready!", files=batch, ephemeral=True)
+            
+            for f in files:
+                if os.path.exists(f):
+                    os.remove(f)
+        else:
+            await interaction.followup.send("❌ Failed to download photos.", ephemeral=True)
 
 class QualitySelectView(discord.ui.View):
     """Refined dynamic quality selection based on available resolutions."""

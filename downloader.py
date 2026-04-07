@@ -2,6 +2,9 @@ import yt_dlp
 import os
 import uuid
 import logging
+import hashlib
+import re
+import aiohttp
 
 # --- LOGGING SETUP ---
 logger = logging.getLogger("MediaBot.Downloader")
@@ -133,3 +136,86 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
     except Exception as e:
         logger.error(f"download_media failed: {e}")
         raise e
+
+def get_instagram_carousel(url):
+    """
+    Extracts carousel entries (multi-photo) from an Instagram post.
+    Returns a list of dicts: [{'index': 1, 'url': '...', 'title': '...'}, ...]
+    """
+    logger.info(f"Extracting Instagram carousel for {url}")
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False, # We need entries info
+    }
+    if os.path.exists("cookies.txt"):
+        ydl_opts['cookiefile'] = 'cookies.txt'
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            entries = []
+            title = info.get('title', 'Instagram Photo')
+
+            # yt-dlp returns carousels as a playlist
+            if info.get('_type') == 'playlist' or 'entries' in info:
+                for i, entry in enumerate(info.get('entries', []), 1):
+                    img_url = entry.get('url') or entry.get('thumbnail')
+                    if img_url:
+                        entries.append({
+                            'index': i,
+                            'url': img_url,
+                            'title': title
+                        })
+            else:
+                # Single photo
+                img_url = info.get('url') or info.get('thumbnail')
+                if img_url:
+                    entries.append({
+                        'index': 1,
+                        'url': img_url,
+                        'title': title
+                    })
+            
+            return entries
+    except Exception as e:
+        logger.error(f"get_instagram_carousel failed: {e}")
+        return []
+
+async def download_instagram_photo(url, index=None):
+    """
+    Downloads one or all photos from an Instagram carousel.
+    Returns list of file paths.
+    """
+    entries = get_instagram_carousel(url)
+    if not entries:
+        return []
+
+    to_download = entries
+    if index is not None:
+        to_download = [e for e in entries if e['index'] == index]
+
+    results = []
+    if not os.path.exists("downloads"):
+        os.makedirs("downloads")
+
+    async with aiohttp.ClientSession() as session:
+        for entry in to_download:
+            try:
+                # Sanitize title
+                clean_title = re.sub(r'[^\w\-_\. ]', '_', entry['title'])[:30]
+                short_hash = hashlib.mdsafe_hex(entry['url'].encode(), 4) if hasattr(hashlib, 'mdsafe_hex') else hashlib.md5(entry['url'].encode()).hexdigest()[:8]
+                file_path = f"downloads/{clean_title}_{short_hash}.jpg"
+
+                async with session.get(entry['url']) as resp:
+                    if resp.status == 200:
+                        content = await resp.read()
+                        with open(file_path, "wb") as f:
+                            f.write(content)
+                        results.append(file_path)
+                        logger.info(f"Downloaded Instagram photo: {file_path}")
+            except Exception as e:
+                logger.error(f"Failed to download photo {entry['index']}: {e}")
+    
+    return results
