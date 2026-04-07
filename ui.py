@@ -2,148 +2,198 @@ import os
 import asyncio
 import logging
 import discord
+import json
 
-from downloader import download_media
+from downloader import download_media, get_media_info
 
 logger = logging.getLogger("MediaBot")
 
-class DownloadModal(discord.ui.Modal):
-    def __init__(self, format_type: str, quality: str):
-        super().__init__(title='Enter Media Link')
-        self.format_type = format_type
-        self.quality = quality
+# Load config for BASE_URL
+try:
+    with open("config.json", "r") as f:
+        CONFIG = json.load(f)
+except Exception:
+    CONFIG = {"BASE_URL": "http://localhost:8080"}
 
-    # Text input for the source URL
+class QualitySelectView(discord.ui.View):
+    """Dynamic quality selection for Videos."""
+    def __init__(self, url: str, heights: list):
+        super().__init__(timeout=180)
+        self.url = url
+        
+        # Determine available options (max 25 for Select)
+        options = []
+        # Filter and map heights
+        standard_heights = [360, 480, 720, 1080, 1440, 2160]
+        available_standard = [h for h in standard_heights if h <= max(heights or [2160])]
+        
+        for h in available_standard:
+            label = f"{h}p"
+            if h == 1080: label += " (Full HD)"
+            if h == 2160: label += " (Ultra HD 4K)"
+            options.append(discord.SelectOption(label=label, value=str(h)))
+        
+        if not options:
+            options.append(discord.SelectOption(label="Best Available", value="best"))
+
+        self.add_item(self.create_select(options))
+
+    def create_select(self, options):
+        select = discord.ui.Select(placeholder="Choose video quality...", options=options)
+        select.callback = self.on_select
+        return select
+
+    async def on_select(self, interaction: discord.Interaction):
+        quality = interaction.data['values'][0]
+        await process_action(interaction, self.url, "video", quality=quality)
+
+class AudioFormatView(discord.ui.View):
+    """Format selection for Audio."""
+    def __init__(self, url: str):
+        super().__init__(timeout=180)
+        self.url = url
+
+    @discord.ui.select(
+        placeholder="Choose audio format...",
+        options=[
+            discord.SelectOption(label="MP3 (Standard)", value="mp3", default=True),
+            discord.SelectOption(label="WAV (Lossless)", value="wav"),
+            discord.SelectOption(label="FLAC (High Fidelity)", value="flac"),
+            discord.SelectOption(label="M4A (Apple)", value="m4a")
+        ]
+    )
+    async def select_format(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await process_action(interaction, self.url, "audio", extension=select.values[0])
+
+class PictureFormatView(discord.ui.View):
+    """Format selection for Pictures."""
+    def __init__(self, url: str):
+        super().__init__(timeout=180)
+        self.url = url
+
+    @discord.ui.select(
+        placeholder="Choose image format...",
+        options=[
+            discord.SelectOption(label="PNG (Lossless)", value="png", default=True),
+            discord.SelectOption(label="JPG (Fast)", value="jpg"),
+            discord.SelectOption(label="WEBP (Modern)", value="webp")
+        ]
+    )
+    async def select_format(self, interaction: discord.Interaction, select: discord.ui.Select):
+        await process_action(interaction, self.url, "picture", extension=select.values[0])
+
+async def process_action(interaction: discord.Interaction, url: str, format_type: str, quality: str = "1080", extension: str = None):
+    """Global processor for the final download stage."""
+    # 1. Internal Progress Embed
+    embed = discord.Embed(
+        title="📥 Fetchy | Working...",
+        description="🔍 Initializing request...",
+        color=discord.Color.yellow()
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    loop = interaction.client.loop
+
+    async def update_status_ui(phase):
+        phase_map = {
+            "SEARCHING": "🔍 Locating media...",
+            "DOWNLOADING": "📥 Downloading data...",
+            "PROCESSING": "⚙️ Optimizing and skinning..."
+        }
+        embed.description = phase_map.get(phase, phase)
+        await interaction.edit_original_response(embed=embed)
+
+    def status_callback(status):
+        asyncio.run_coroutine_threadsafe(update_status_ui(status), loop)
+
+    file_path = None
+    try:
+        file_path = await asyncio.to_thread(download_media, url, format_type, quality, extension, status_callback)
+        
+        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        
+        if file_size_mb > 10.0:
+            # --- SELF-HOSTING FALLBACK ---
+            base_url = CONFIG.get("BASE_URL", "http://localhost:8080").rstrip('/')
+            filename = os.path.basename(file_path)
+            download_link = f"{base_url}/dl/{filename}"
+            
+            embed.title = "📦 File is too large for Discord!"
+            embed.description = (
+                f"Your file is **{file_size_mb:.2f} MB**. I've hosted it privately for you.\n\n"
+                f"🚀 **Download Link:** [Click here to download]({download_link})\n\n"
+                "*Link expires in 24 hours.*"
+            )
+            embed.color = discord.Color.blue()
+            await interaction.edit_original_response(embed=embed)
+        else:
+            # Standard delivery
+            embed.title = "✅ Success!"
+            embed.description = "Your file has been prepared. Enjoy! ✨"
+            embed.color = discord.Color.green()
+            discord_file = discord.File(file_path)
+            await interaction.edit_original_response(embed=embed, attachments=[discord_file])
+
+    except Exception as e:
+        error_str = str(e)
+        logger.error(f"Download error: {error_str}")
+        embed.title = "❌ Error"
+        embed.description = "I couldn't process this link. Please ensure it's public and valid. 😓"
+        embed.color = discord.Color.red()
+        await interaction.edit_original_response(embed=embed)
+    # File cleanup handled by main maintenance task or finally block? 
+    # Actually, we should delete smaller files instantly after upload, 
+    # but KEEP large files for 24h as per config.
+    finally:
+        if file_path and os.path.exists(file_path):
+            if os.path.getsize(file_path) / (1024 * 1024) <= 10.0:
+                os.remove(file_path)
+
+class DownloadModal(discord.ui.Modal):
+    def __init__(self, format_requested: str):
+        super().__init__(title='Analyze Media Link')
+        self.format_requested = format_requested
+
     url_input = discord.ui.TextInput(
-        label='Video / Audio URL',
-        style=discord.TextStyle.short,
-        placeholder='https://www...',
+        label='Paste Link Here',
+        placeholder='YouTube, TikTok, X, Instagram...',
         required=True
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        raw_format = self.format_type
-        loop = interaction.client.loop
+        await interaction.response.send_message("🔍 **Analyzing content...** Please wait.", ephemeral=True)
         
-        # 1. Ephemeral Response ("Please Wait" Status)
-        embed = discord.Embed(
-            title=f"🎬 Fetchy | Preparing your {raw_format}",
-            description="🔄 Initializing request...",
-            color=discord.Color.yellow()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        # Thread-safe callback for live status updates from downloader
-        async def update_status_ui(phase):
-            phase_map = {
-                "SEARCHING": "🔍 Searching for your content...",
-                "DOWNLOADING": "📥 Downloading media files...",
-                "PROCESSING": "⚙️ Finalizing and merging quality layers..."
-            }
-            embed.description = phase_map.get(phase, phase)
-            await interaction.edit_original_response(embed=embed)
-
-        def status_callback(status):
-            asyncio.run_coroutine_threadsafe(update_status_ui(status), loop)
+        url = self.url_input.value
+        info = await asyncio.to_thread(get_media_info, url)
         
-        file_path = None
-        try:
-            # 2. Extract and download with live hooks
-            url = self.url_input.value
-            file_path = await asyncio.to_thread(download_media, url, raw_format, self.quality, status_callback)
-            
-            # 3. Limit Checking for 10MB
-            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            if file_size_mb > 10.0:
-                embed.title = "❌ Request failed"
-                embed.description = f"The requested file is **{file_size_mb:.2f} MB**, which exceeds my current 10 MB limit for Discord uploads. 😓"
-                embed.color = discord.Color.red()
-                await interaction.edit_original_response(embed=embed, attachments=[])
-            else:
-                embed.title = "✅ Your file is ready!"
-                embed.description = f"Handled with care at **{self.quality}p**. ✨\n\n*Support the project: [Star us on GitHub](https://github.com/CRZX1337/Fetchy)*"
-                embed.color = discord.Color.green()
-                
-                # Post file to the Interaction webhook
-                discord_file = discord.File(file_path)
-                await interaction.edit_original_response(embed=embed, attachments=[discord_file])
-                
-        except Exception as e:
-            error_str = str(e)
-            logger.error(f"Error at URL {self.url_input.value}: {error_str}")
-            
-            # Specific Mapper for yt-dlp exceptions
-            if "Private video" in error_str:
-                friendly_error = "I'm sorry, that video seems to be private! 🔒 I can't access restricted content."
-            elif "Unsupported URL" in error_str:
-                friendly_error = "Oops! I don't recognize this platform yet. Maybe check my supported sites? 🤔"
-            else:
-                friendly_error = "Something went wrong while I was fetching your file. I'll try to do better next time! 😓"
-                
-            embed.title = "❌ Request issue"
-            embed.description = friendly_error
-            embed.color = discord.Color.red()
-            await interaction.edit_original_response(embed=embed, attachments=[])
-            
-        finally:
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                    logger.info(f"Disk cleanup successful: {file_path}")
-                except Exception as cleanup_err:
-                    logger.error(f"Error deleting local file cache: {cleanup_err}")
+        if not info:
+            await interaction.edit_original_response(content="❌ **Link Analysis Failed.** I couldn't find any media there! 🤔")
+            return
 
-class QualitySelectView(discord.ui.View):
-    def __init__(self, format_type: str):
-        super().__init__(timeout=180)
-        self.format_type = format_type
-
-    @discord.ui.select(
-        placeholder="Choose your preferred quality...",
-        options=[
-            discord.SelectOption(label="720p", value="720", description="Standard HD - Balanced performance"),
-            discord.SelectOption(label="1080p", value="1080", description="Full HD - Recommended baseline", default=True),
-            discord.SelectOption(label="1440p (2K)", value="1440", description="Quad HD - For high-res displays"),
-            discord.SelectOption(label="2160p (4K)", value="2160", description="Ultra HD - Maximum fidelity")
-        ]
-    )
-    async def select_quality(self, interaction: discord.Interaction, select: discord.ui.Select):
-        quality = select.values[0]
-        # Transition to the URL input modal
-        await interaction.response.send_modal(DownloadModal(format_type=self.format_type, quality=quality))
+        title_short = info['title'][:50] + "..." if len(info['title']) > 50 else info['title']
+        
+        if self.format_requested == "video":
+            view = QualitySelectView(url, info['heights'])
+            await interaction.edit_original_response(content=f"🎬 **Found:** *{title_short}*\nSelect Your Video Quality:", view=view)
+        elif self.format_requested == "audio":
+            view = AudioFormatView(url)
+            await interaction.edit_original_response(content=f"🎵 **Found:** *{title_short}*\nSelect Audio Format:", view=view)
+        elif self.format_requested == "picture":
+            view = PictureFormatView(url)
+            await interaction.edit_original_response(content=f"🖼️ **Found:** *{title_short}*\nSelect Image Format:", view=view)
 
 class DashboardView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        
-    @discord.ui.button(label="🎥 Video (MP4)", style=discord.ButtonStyle.primary, custom_id="persistent_dashboard_btn_video")
-    async def btn_video(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Please select the desired video quality:", view=QualitySelectView("video"), ephemeral=True)
 
-    @discord.ui.button(label="🎵 Audio (MP3)", style=discord.ButtonStyle.success, custom_id="persistent_dashboard_btn_audio")
-    async def btn_audio(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Audio currently defaults to best, but we'll follow the flow
-        await interaction.response.send_message("High-quality audio extraction selected. Proceed to link:", view=QualitySelectView("audio"), ephemeral=True)
+    @discord.ui.button(label="🎥 Video", style=discord.ButtonStyle.primary, custom_id="fetchy_video")
+    async def video(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(DownloadModal("video"))
 
-    @discord.ui.button(label="🖼️ Picture (PNG)", style=discord.ButtonStyle.secondary, custom_id="persistent_dashboard_btn_picture")
-    async def btn_picture(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Original quality picture extraction selected. Proceed to link:", view=QualitySelectView("picture"), ephemeral=True)
+    @discord.ui.button(label="🎵 Audio", style=discord.ButtonStyle.success, custom_id="fetchy_audio")
+    async def audio(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(DownloadModal("audio"))
 
-    @discord.ui.button(label="❓ Supported Sites", style=discord.ButtonStyle.gray, custom_id="persistent_dashboard_btn_help")
-    async def btn_help(self, interaction: discord.Interaction, button: discord.ui.Button):
-        help_embed = discord.Embed(
-            title="🌐 Fetchy | Supported Platforms",
-            description=(
-                "I support high-quality extraction from hundreds of platforms! "
-                "Here are the most popular ones:\n\n"
-                "• **YouTube** (Videos, Shorts, Music)\n"
-                "• **TikTok** (No watermark where possible)\n"
-                "• **Twitter / X**\n"
-                "• **Instagram** (Reels, Posts)\n"
-                "• **Twitch** (Clips)\n"
-                "• **SoundCloud**\n\n"
-                "✨ **Pro Tip:** If you have a link, just try it! There's a good chance I can handle it. 🚀"
-            ),
-            color=discord.Color.blue()
-        )
-        await interaction.response.send_message(embed=help_embed, ephemeral=True)
+    @discord.ui.button(label="🖼️ Picture", style=discord.ButtonStyle.secondary, custom_id="fetchy_picture")
+    async def picture(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(DownloadModal("picture"))
