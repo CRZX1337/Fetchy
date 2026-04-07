@@ -149,6 +149,12 @@ class MediaBot(commands.Bot):
 
         await self.process_commands(message)
 
+    async def on_command_error(self, ctx, error):
+        """Silently ignore unknown !commands instead of logging them as ERRORs."""
+        if isinstance(error, commands.CommandNotFound):
+            return
+        raise error
+
 # --- BOT ENTRYPOINT ---
 if __name__ == "__main__":
     load_dotenv()
