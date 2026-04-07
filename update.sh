@@ -32,4 +32,4 @@ run_step "📥 Syncing with the remote repository..." git pull --ff-only
 run_step "🏗️ Rebuilding Docker infrastructure..." sudo docker compose build
 run_step "🟢 Deploying the updated system..." sudo docker compose up -d
 
-echo "✅ Update successfully deployed! Fetchy is now operating on the latest version. 🎉"
+echo "✅ Update successfully deployed! Fetchy is now operating on the latest version! 🎉"
