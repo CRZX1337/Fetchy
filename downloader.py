@@ -174,16 +174,22 @@ def get_instagram_carousel(url):
             n_entries = info.get('n_entries') or 0
             title = info.get('title', 'Instagram Photo')
 
+            logger.info(f"post_id={post_id}, n_entries={n_entries}")
+
             # Step 3 & 4: Resolve individual images
             if n_entries > 0:
                 # Update options for individual resolution
                 ydl.params['extract_flat'] = False
                 for i in range(1, n_entries + 1):
                     item_url = f"https://www.instagram.com/p/{post_id}/?img_index={i}"
+                    logger.info(f"Resolving img_index {i}: {item_url}")
                     try:
                         item_info = ydl.extract_info(item_url, download=False)
+                        logger.info(f"item_info keys: {list(item_info.keys()) if item_info else 'None'} | thumbnails={len(item_info.get('thumbnails', []))} | thumbnail={item_info.get('thumbnail')} | url={item_info.get('url')}")
                         thumbnails = item_info.get('thumbnails', [])
                         img_url = thumbnails[-1].get('url') if thumbnails else (item_info.get('thumbnail') or item_info.get('url'))
+                        if not img_url:
+                            logger.warning(f"No image URL found for index {i}")
                         if img_url:
                             entries.append({
                                 'index': i,
