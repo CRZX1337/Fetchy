@@ -8,7 +8,7 @@ git pull
 
 # 2. Build Docker images completely fresh (no cache)
 echo "🏗️ Rebuilding Docker infrastructure..."
-sudo docker compose build --no-cache
+sudo docker compose build
 
 # 3. Start/Update the Docker container in the background
 echo "🟢 Deploying the updated system..."
