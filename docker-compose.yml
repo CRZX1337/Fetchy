@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - INSTAGRAM_USERNAME=${INSTAGRAM_USERNAME}
     ports:
       - "8080:8080"
     volumes:
@@ -12,3 +14,4 @@ services:
       - ./downloads:/app/downloads
       - ./config.json:/app/config.json
       - ./.env:/app/.env
+      - ./session:/app/session

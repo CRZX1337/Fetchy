@@ -2,3 +2,5 @@ discord.py>=2.3.2
 yt-dlp>=2024.11.18
 python-dotenv>=1.0.0
 aiohttp>=3.9.0
+instaloader>=4.12.0
+

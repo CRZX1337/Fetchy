@@ -5,6 +5,7 @@ import logging
 import hashlib
 import re
 import aiohttp
+import instaloader
 
 # --- LOGGING SETUP ---
 logger = logging.getLogger("MediaBot.Downloader")
@@ -137,110 +138,81 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
         logger.error(f"download_media failed: {e}")
         raise e
 
+def _get_instaloader_instance():
+    """
+    Creates Instaloader instance and loads session if available.
+    """
+    L = instaloader.Instaloader(
+        quiet=True,
+        download_pictures=False,
+        download_videos=False,
+        download_video_thumbnails=False,
+        save_metadata=False,
+        compress_json=False
+    )
+    try:
+        username = os.environ.get('INSTAGRAM_USERNAME')
+        if username:
+            session_file = f"/app/session/session-{username}"
+            if os.path.exists(session_file):
+                L.load_session_from_file(username, session_file)
+                logger.info(f"Successfully loaded Instaloader session for {username}")
+            else:
+                logger.warning(f"Session file not found at {session_file}")
+        else:
+            logger.warning("INSTAGRAM_USERNAME not set in environment.")
+        return L
+    except Exception as e:
+        logger.warning(f"Failed to load session ({e}), returning anonymous Instaloader.")
+        return L
+
 def get_instagram_carousel(url):
     """
-    Extracts carousel entries (multi-photo) from an Instagram post by resolving individual img_index URLs.
+    Extracts carousel entries (multi-photo) from an Instagram post using Instaloader.
     Returns a list of dicts: [{'index': 1, 'url': '...', 'title': '...'}, ...]
     """
     logger.info(f"Extracting Instagram carousel for {url}")
     
-    # Step 1: Strip img_index and get base info
-    base_url = re.sub(r'[\?&]img_index=\d+', '', url)
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': True,
-        'skip_download': True,
-        'ignore_no_formats_error': True
-    }
-    if os.path.exists("cookies.txt"):
-        ydl_opts['cookiefile'] = 'cookies.txt'
-
-    entries = []
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(base_url, download=False)
-            if not info:
-                return []
+        # Step 1: Extract shortcode
+        # Remove query params like ?img_index=
+        clean_url = re.sub(r'[\?&]img_index=\d+', '', url)
+        
+        # Match /p/SHORTCODE/ or /reel/SHORTCODE/
+        match = re.search(r'/(?:p|reel)/([^/?#&]+)', clean_url)
+        if not match:
+            logger.warning(f"Could not extract shortcode from {url}")
+            return []
             
-            # Step 2: Extract post ID and build base URL
-            post_id = info.get('id') or info.get('playlist_id')
-            if not post_id and "/p/" in base_url:
-                post_id = base_url.split("/p/")[1].split("/")[0]
-            
-            if not post_id:
-                return []
-
-            entries_list = info.get('entries') or []
-            n_entries = (
-                info.get('n_entries')
-                or (entries_list[0].get('n_entries') if entries_list else 0)
-                or (entries_list[0].get('playlist_count') if entries_list else 0)
-                or len(entries_list)
-                or 0
-            )
-            logger.info(f"Resolved n_entries={n_entries}, entries_list len={len(entries_list)}")
-            title = info.get('title', 'Instagram Photo')
-
-            logger.info(f"post_id={post_id}, n_entries={n_entries}")
-
-            # Step 3 & 4: Resolve individual images
-            if n_entries > 0: 
-                resolve_opts = { 
-                    'quiet': True, 
-                    'no_warnings': True, 
-                    'skip_download': True, 
-                    'ignore_no_formats_error': True, 
-                } 
-                if os.path.exists("cookies.txt"): 
-                    resolve_opts['cookiefile'] = 'cookies.txt' 
-            
-                with yt_dlp.YoutubeDL(resolve_opts) as ydl2: 
-                    for i, entry in enumerate(entries_list[:n_entries], start=1): 
-                        entry_url = entry.get('webpage_url') or entry.get('url') 
-                        if not entry_url: 
-                            logger.warning(f"No URL for entry {i}, skipping") 
-                            continue 
-                        logger.info(f"Resolving entry {i}: {entry_url}") 
-                        try: 
-                            resolved = ydl2.extract_info(entry_url, download=False) 
-                            # Dig into nested playlist if needed 
-                            if resolved and 'entries' in resolved: 
-                                sub = list(resolved.get('entries') or []) 
-                                resolved = sub[i - 1] if len(sub) >= i else (sub[0] if sub else resolved) 
-                            if not resolved: 
-                                continue 
-                            thumbnails = resolved.get('thumbnails', []) 
-                            img_url = thumbnails[-1].get('url') if thumbnails else (resolved.get('thumbnail') or resolved.get('url')) 
-                            if img_url: 
-                                entries.append({'index': i, 'url': img_url, 'title': title}) 
-                                logger.info(f"Got image URL for entry {i}") 
-                            else: 
-                                logger.warning(f"No image URL for entry {i}") 
-                        except Exception as e: 
-                            logger.error(f"Failed to resolve entry {i}: {e}") 
-            else:
-                # Single photo logic
-                ydl.params['extract_flat'] = False
-                item_info = ydl.extract_info(base_url, download=False)
-                
-                # If yt-dlp returns a playlist wrapper, dig into the first entry 
-                if item_info.get('_type') == 'playlist' or 'entries' in item_info: 
-                    sub_entries = item_info.get('entries') or [] 
-                    if sub_entries: 
-                        item_info = sub_entries[0] 
-                
-                thumbnails = item_info.get('thumbnails', [])
-                img_url = thumbnails[-1].get('url') if thumbnails else (item_info.get('thumbnail') or item_info.get('url'))
+        shortcode = match.group(1)
+        logger.info(f"Extracted shortcode: {shortcode}")
+        
+        # Step 2: Get Instaloader instance
+        L = _get_instaloader_instance()
+        
+        # Step 3: Fetch post via Post.from_shortcode
+        post = instaloader.Post.from_shortcode(L.context, shortcode)
+        
+        # Step 4: Extract images
+        caption = post.caption[:100] if post.caption else "Instagram Post"
+        entries = []
+        
+        if post.typename == 'GraphSidecar':
+            logger.info("Post is a GraphSidecar (carousel)")
+            for i, node in enumerate(post.get_sidecar_nodes(), start=1):
+                img_url = node.display_url
                 if img_url:
-                    entries.append({
-                        'index': 1,
-                        'url': img_url,
-                        'title': title
-                    })
-            
-            logger.info(f"Found {len(entries)} entries for Instagram post.")
-            return entries
+                    entries.append({'index': i, 'url': img_url, 'title': caption})
+                    logger.info(f"Got image URL for entry {i}")
+        else:
+            logger.info("Post is a single image/video")
+            img_url = post.url
+            if img_url:
+                entries.append({'index': 1, 'url': img_url, 'title': caption})
+                logger.info("Got image URL for single entry")
+                
+        logger.info(f"Found {len(entries)} entries for Instagram post.")
+        return entries
     except Exception as e:
         logger.error(f"get_instagram_carousel failed: {e}")
         return []
