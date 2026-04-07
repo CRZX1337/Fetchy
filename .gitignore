@@ -6,6 +6,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+cookies.txt
 
 # Project specifics
 downloads/
