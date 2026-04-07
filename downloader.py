@@ -185,36 +185,40 @@ def get_instagram_carousel(url):
             logger.info(f"post_id={post_id}, n_entries={n_entries}")
 
             # Step 3 & 4: Resolve individual images
-            if n_entries > 0:
-                # Update options for individual resolution
-                ydl.params['extract_flat'] = False
-                for i in range(1, n_entries + 1):
-                    item_url = f"https://www.instagram.com/p/{post_id}/?img_index={i}"
-                    logger.info(f"Resolving img_index {i}: {item_url}")
-                    try:
-                        item_info = ydl.extract_info(item_url, download=False) 
-                        logger.info(f"_type={item_info.get('_type')} | has entries={('entries' in item_info)} | entries count={len(item_info.get('entries') or [])}") 
-                        
-                        # Dig into entries if present 
-                        actual_info = item_info 
-                        if 'entries' in item_info: 
-                            sub = list(item_info.get('entries') or []) 
-                            logger.info(f"sub entries count={len(sub)} | first sub keys={list(sub[0].keys()) if sub else 'empty'}") 
-                            if sub: 
-                                actual_info = sub[0] 
-                                # If still lazy, resolve it 
-                                if '__post_extractor' in actual_info: 
-                                    logger.warning(f"Entry {i} is lazy (__post_extractor), needs full extraction") 
-                                logger.info(f"actual_info thumbnails={len(actual_info.get('thumbnails', []))} | thumbnail={actual_info.get('thumbnail')} | url={actual_info.get('url')} | formats={len(actual_info.get('formats', []))}") 
-                        
-                        thumbnails = actual_info.get('thumbnails', []) 
-                        img_url = thumbnails[-1].get('url') if thumbnails else (actual_info.get('thumbnail') or actual_info.get('url')) 
-                        if not img_url: 
-                            logger.warning(f"No image URL found for index {i}") 
+            if n_entries > 0: 
+                resolve_opts = { 
+                    'quiet': True, 
+                    'no_warnings': True, 
+                    'skip_download': True, 
+                    'ignore_no_formats_error': True, 
+                } 
+                if os.path.exists("cookies.txt"): 
+                    resolve_opts['cookiefile'] = 'cookies.txt' 
+            
+                with yt_dlp.YoutubeDL(resolve_opts) as ydl2: 
+                    for i, entry in enumerate(entries_list[:n_entries], start=1): 
+                        entry_url = entry.get('webpage_url') or entry.get('url') 
+                        if not entry_url: 
+                            logger.warning(f"No URL for entry {i}, skipping") 
                             continue 
-                        entries.append({'index': i, 'url': img_url, 'title': title})
-                    except Exception as e:
-                        logger.error(f"Failed to extract img_index {i}: {e}")
+                        logger.info(f"Resolving entry {i}: {entry_url}") 
+                        try: 
+                            resolved = ydl2.extract_info(entry_url, download=False) 
+                            # Dig into nested playlist if needed 
+                            if resolved and 'entries' in resolved: 
+                                sub = list(resolved.get('entries') or []) 
+                                resolved = sub[i - 1] if len(sub) >= i else (sub[0] if sub else resolved) 
+                            if not resolved: 
+                                continue 
+                            thumbnails = resolved.get('thumbnails', []) 
+                            img_url = thumbnails[-1].get('url') if thumbnails else (resolved.get('thumbnail') or resolved.get('url')) 
+                            if img_url: 
+                                entries.append({'index': i, 'url': img_url, 'title': title}) 
+                                logger.info(f"Got image URL for entry {i}") 
+                            else: 
+                                logger.warning(f"No image URL for entry {i}") 
+                        except Exception as e: 
+                            logger.error(f"Failed to resolve entry {i}: {e}") 
             else:
                 # Single photo logic
                 ydl.params['extract_flat'] = False
