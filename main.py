@@ -9,18 +9,18 @@ from discord.ext import commands, tasks
 import re
 from dotenv import load_dotenv
 
-# --- CUSTOM MODULES ---
-from config import CONFIG
-from ui import DashboardView, SupportInformationEmbed
-import downloader
-from constants import BOT_NAME
-
 # --- LOGGING SETUP ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("MediaBot.Main")
+
+# --- CUSTOM MODULES ---
+from config import CONFIG
+from ui import DashboardView, SupportInformationEmbed
+import downloader
+from constants import BOT_NAME
 
 # --- STATIC SERVER SETTING ---
 async def start_server():
