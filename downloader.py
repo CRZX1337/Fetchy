@@ -175,8 +175,8 @@ def _get_instaloader_instance():
 
 def get_instagram_carousel(url):
     """
-    Extracts carousel entries (multi-photo) from an Instagram post using Instaloader.
-    Returns a list of dicts: [{'index': 1, 'url': '...', 'title': '...'}, ...]
+    Extracts carousel entries from an Instagram post using Instaloader.
+    Returns a list of dicts: [{'index': 1, 'url': '...', 'title': '...', 'ext': 'jpg', 'media_type': 'image'}, ...]
     """
     logger.info(f"Extracting Instagram carousel for {url}")
     
@@ -200,23 +200,41 @@ def get_instagram_carousel(url):
         # Step 3: Fetch post via Post.from_shortcode
         post = instaloader.Post.from_shortcode(L.context, shortcode)
         
-        # Step 4: Extract images
+        # Step 4: Extract media entries
         caption = post.caption[:100] if post.caption else "Instagram Post"
         entries = []
         
         if post.typename == 'GraphSidecar':
             logger.info("Post is a GraphSidecar (carousel)")
             for i, node in enumerate(post.get_sidecar_nodes(), start=1):
-                img_url = node.display_url
-                if img_url:
-                    entries.append({'index': i, 'url': img_url, 'title': caption})
-                    logger.info(f"Got image URL for entry {i}")
+                is_video = getattr(node, 'is_video', False)
+                media_url = getattr(node, 'video_url', None) if is_video else getattr(node, 'display_url', None)
+                ext = 'mp4' if is_video else 'jpg'
+                media_type = 'video' if is_video else 'image'
+                if media_url:
+                    entries.append({
+                        'index': i,
+                        'url': media_url,
+                        'title': caption,
+                        'ext': ext,
+                        'media_type': media_type,
+                    })
+                    logger.info(f"Got {media_type} URL for entry {i}")
         else:
             logger.info("Post is a single image/video")
-            img_url = post.url
-            if img_url:
-                entries.append({'index': 1, 'url': img_url, 'title': caption})
-                logger.info("Got image URL for single entry")
+            is_video = getattr(post, 'is_video', False)
+            media_url = getattr(post, 'video_url', None) if is_video else getattr(post, 'url', None)
+            ext = 'mp4' if is_video else 'jpg'
+            media_type = 'video' if is_video else 'image'
+            if media_url:
+                entries.append({
+                    'index': 1,
+                    'url': media_url,
+                    'title': caption,
+                    'ext': ext,
+                    'media_type': media_type,
+                })
+                logger.info(f"Got {media_type} URL for single entry")
                 
         logger.info(f"Found {len(entries)} entries for Instagram post.")
         return entries
@@ -226,7 +244,7 @@ def get_instagram_carousel(url):
 
 async def download_instagram_photo(url, index=None):
     """
-    Downloads one or all photos from an Instagram carousel.
+    Downloads one or all media items from an Instagram post or carousel.
     Returns list of file paths.
     """
     entries = get_instagram_carousel(url)
@@ -248,7 +266,9 @@ async def download_instagram_photo(url, index=None):
                 # Sanitize title
                 clean_title = re.sub(r'[^\w\-_\. ]', '_', entry['title'])[:30]
                 short_hash = hashlib.md5(entry['url'].encode()).hexdigest()[:8]
-                file_path = f"downloads/{clean_title}_{short_hash}.jpg"
+                ext = entry.get('ext', 'jpg')
+                media_type = entry.get('media_type', 'image')
+                file_path = f"downloads/{clean_title}_{short_hash}.{ext}"
 
                 async with session.get(entry['url']) as resp:
                     if resp.status == 200:
@@ -256,7 +276,7 @@ async def download_instagram_photo(url, index=None):
                         with open(file_path, "wb") as f:
                             f.write(content)
                         results.append(file_path)
-                        logger.info(f"Downloaded Instagram photo: {file_path}")
+                        logger.info(f"Downloaded Instagram {media_type}: {file_path}")
             except Exception as e:
                 logger.error(f"Failed to download photo {entry['index']}: {e}")
     
