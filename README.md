@@ -108,4 +108,4 @@ Fetchy is built on the shoulders of these incredible open-source projects:
 - [FFmpeg](https://ffmpeg.org/) — The power behind media conversion and merging.
 
 ---
-*Developed with care by [CRZX1337](https://github.com/CRZX1337/Fetchy)*
+*Developed with ❤️ by [CRZX1337](https://github.com/CRZX1337/Fetchy)*
