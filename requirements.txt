@@ -1,6 +1,14 @@
-discord.py>=2.3.2
-yt-dlp>=2024.11.18
-python-dotenv>=1.0.0
-aiohttp>=3.9.0
-instaloader>=4.12.0
+# Core Discord library
+discord.py==2.3.2
 
+# Media downloader (pin minor to avoid breaking API changes)
+yt-dlp==2024.11.18
+
+# Environment variable loading
+python-dotenv==1.0.0
+
+# Async HTTP client
+aiohttp==3.9.0
+
+# Instagram media extraction
+instaloader==4.12.0
