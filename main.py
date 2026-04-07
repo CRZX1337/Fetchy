@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Import our clean UI architecture
 from ui import DashboardView
 
-load_dotenv()
+import re
 
 # --- LOGGING SETUP ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -16,9 +16,12 @@ logger = logging.getLogger("MediaBot")
 
 CHANNEL_ID = 1491040447370362980
 
+# Regex for detecting common media links
+LINK_REGEX = r'(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|twitter\.com|x\.com|instagram\.com)/[^\s]+'
+
 class MediaBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=discord.Intents.default())
+        super().__init__(command_prefix="!", intents=discord.Intents.all()) # Enabled all intents for on_message
         
         # Rotating status activities
         self.activities = itertools.cycle([
@@ -27,6 +30,27 @@ class MediaBot(commands.Bot):
             discord.Activity(type=discord.ActivityType.playing, name="🎬 with Media files"),
             discord.Activity(type=discord.ActivityType.watching, name="out for new Links 🚀")
         ])
+
+    async def on_message(self, message):
+        # 1. Ignore own messages
+        if message.author == self.user:
+            return
+
+        # 2. Only watch the designated Dashboard Channel
+        if message.channel.id == CHANNEL_ID:
+            # 3. Detect media links using regex
+            if re.search(LINK_REGEX, message.content, re.IGNORECASE):
+                logger.info(f"Media link detected from {message.author}: {message.content}")
+                
+                # Send a friendly prompt with the dashboard interaction buttons
+                prompt_text = (
+                    f"👋 Hello, {message.author.display_name}! I noticed you shared a media link.\n"
+                    "Would you like me to process that for you? Just pick a format below! 🚀"
+                )
+                await message.reply(prompt_text, view=DashboardView(), delete_after=300) # Auto-delete prompt after 5 mins
+
+        # 4. Mandatory for commands to continue working (if any)
+        await self.process_commands(message)
 
     async def setup_hook(self):
         # 1. Essential for keeping button functionality after bot restarts:
