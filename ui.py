@@ -25,8 +25,8 @@ class DownloadModal(discord.ui.Modal):
         
         # 1. Ephemeral Response ("Please Wait" Status)
         embed = discord.Embed(
-            title=f"⏳ Grabbing that {raw_format} for you...",
-            description="Hang tight! I'm downloading your request in the background... 🚀",
+            title=f"⏳ Preparing your {raw_format}...",
+            description="Just a moment while I process your request in the background... 🚀",
             color=discord.Color.yellow()
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -40,13 +40,13 @@ class DownloadModal(discord.ui.Modal):
             # 3. Limit Checking for 10MB
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
             if file_size_mb > 10.0:
-                embed.title = "❌ Download failed"
-                embed.description = f"The requested file is **{file_size_mb:.2f} MB**, which exceeds the 10 MB limit for mobile-friendly uploads. 😓"
+                embed.title = "❌ Request failed"
+                embed.description = f"The requested file is **{file_size_mb:.2f} MB**, which exceeds my current 10 MB limit for Discord uploads. 😓"
                 embed.color = discord.Color.red()
                 await interaction.edit_original_response(embed=embed, attachments=[])
             else:
-                embed.title = "✅ Processing complete"
-                embed.description = f"Your file has been prepared and is ready for use. ✨\n\n*Support the project: [Star us on GitHub](https://github.com/CRZX1337/Fetchy)*"
+                embed.title = "✅ Your file is ready!"
+                embed.description = f"Handled with care. ✨\n\n*Support the project: [Star us on GitHub](https://github.com/CRZX1337/Fetchy)*"
                 embed.color = discord.Color.green()
                 
                 # Post file to the Interaction webhook
@@ -55,8 +55,8 @@ class DownloadModal(discord.ui.Modal):
                 
         except Exception as e:
             logger.error(f"Error at URL {self.url_input.value}: {str(e)}")
-            embed.title = "❌ Oops, something went wrong on my end..."
-            embed.description = f"My gears got jammed while processing your request:\n```{str(e)[:700]}```"
+            embed.title = "❌ I ran into a small issue processing your request"
+            embed.description = f"Here's what happened on my end:\n```{str(e)[:700]}```"
             embed.color = discord.Color.red()
             await interaction.edit_original_response(embed=embed, attachments=[])
             

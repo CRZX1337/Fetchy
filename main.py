@@ -63,21 +63,22 @@ class MediaBot(commands.Bot):
                 
             # Permanent Dashboard Setup
             dash_embed = discord.Embed(
-                title="📥 Hi, I'm Fetchy! Your Personal Media Assistant.",
+                title="📥 Fetchy | Your Personal Media Assistant",
                 description=(
-                    "I am here to help you download and manage your favorite media efficiently. "
-                    "All interactions are handled with strict privacy and anonymity. ✨\n\n"
+                    "I am here to assist you with high-performance media extraction and management. "
+                    "Enjoy a fully private and anonymous experience across all your interactions. ✨\n\n"
                     "**How to get started:**\n"
                     "1. Select a **format** below (Video, Audio, or Picture).\n"
-                    "2. Provide the **source link** in the input field.\n"
-                    "3. Relax while I process and deliver your file directly to you! 🚀\n\n"
+                    "2. Provide the **source link** in the secure input field.\n"
+                    "3. Relax while I process and deliver your requested file! 🚀\n\n"
                     "---\n"
                     "✨ **Key Benefits:** High Performance • Secure Processing • Zero Tracking\n"
                     "🖥️ **Source Code:** [GitHub Repository](https://github.com/CRZX1337/Fetchy)"
                 ),
                 color=discord.Color.blurple()
             )
-            dash_embed.set_footer(text="Developed with care • System fully operational")
+            dash_embed.set_thumbnail(url="https://raw.githubusercontent.com/CRZX1337/Fetchy/main/media/logo.png")
+            dash_embed.set_footer(text="Handcrafted for efficiency • System fully operational")
             
             # Send the View/Embed back into the cleaned channel
             await channel.send(embed=dash_embed, view=DashboardView())
