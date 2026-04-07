@@ -3,7 +3,7 @@
 ![Fetchy Banner](./media/banner.png)
 
 [![Version](https://img.shields.io/badge/version-v1.1.0-blue.svg)](https://github.com/CRZX1337/Fetchy)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/CRZX1337/Fetchy/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/CRZX1337/Fetchy/blob/master/LICENSE)
 [![Powered by yt-dlp](https://img.shields.io/badge/powered%20by-yt--dlp-red.svg)](https://github.com/yt-dlp/yt-dlp)
 [![Built with Python 3.11](https://img.shields.io/badge/built%20with-Python%203.11-yellow.svg)](https://www.python.org/)
 
