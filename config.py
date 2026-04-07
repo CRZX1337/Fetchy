@@ -36,6 +36,13 @@ class ConfigLoader:
         )
         self._config["BASE_URL"] = os.getenv("BASE_URL", "http://localhost:8080")
 
+        # ADMIN_IDS: comma-separated Discord user IDs that bypass rate limits
+        # Example in .env: ADMIN_IDS=123456789,987654321
+        raw_admin_ids = os.getenv("ADMIN_IDS", "")
+        self._config["ADMIN_IDS"] = set(
+            int(uid.strip()) for uid in raw_admin_ids.split(",") if uid.strip().isdigit()
+        )
+
     @property
     def config(self):
         return self._config
