@@ -49,7 +49,6 @@ async def _handle_download(request: web.Request) -> web.Response:
             content_type="application/json",
             text='{"error": "Token expired"}'
         )
-    # Token stays alive for re-downloads within the 24 h window
     return web.FileResponse(filepath)
 
 
@@ -69,6 +68,8 @@ class MediaBot(commands.Bot):
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents, help_command=None)
         self.status_index = 0
+        # Fix #9: Guard flag so on_ready only runs once (not on every reconnect)
+        self._ready_sent = False
         self.statuses = [
             "Watching for links... 🔍",
             "Ready to download! 📽️",
@@ -110,14 +111,12 @@ class MediaBot(commands.Bot):
                     logger.error(f"Failed to delete {file_path}: {e}")
         logger.info(f"Cleanup finished. Deleted {count} files.")
 
-        # Clean up expired cooldown entries
         now = time.time()
         expired_cooldowns = [uid for uid, t in ui._user_cooldowns.items() if now - t > 30]
         for uid in expired_cooldowns:
             del ui._user_cooldowns[uid]
         logger.info(f"Cleared {len(expired_cooldowns)} expired cooldown entries.")
 
-        # Clean up expired file tokens
         expired_tokens = [t for t, (_, exp) in file_server._file_tokens.items() if now > exp]
         for t in expired_tokens:
             del file_server._file_tokens[t]
@@ -128,8 +127,19 @@ class MediaBot(commands.Bot):
         await self.wait_until_ready()
 
     async def on_ready(self):
+        # Fix #9: Prevent on_ready from running again after a Discord reconnect
+        if self._ready_sent:
+            logger.info(f"Reconnected as {self.user} — skipping dashboard re-post.")
+            return
+        self._ready_sent = True
+
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
         logger.info(f"Targeting Channel ID: {CONFIG['CHANNEL_ID']}")
+
+        # Fix #8: Run cleanup immediately on first start instead of waiting 24h
+        logger.info("Running initial cleanup on startup...")
+        await self.cleanup_task()
+
         channel = self.get_channel(CONFIG["CHANNEL_ID"])
         if channel:
             try:
@@ -150,7 +160,6 @@ class MediaBot(commands.Bot):
         if message.author == self.user:
             return
 
-        # Auto-detect media links in the designated channel
         if message.channel.id == CONFIG['CHANNEL_ID']:
             if re.search(CONFIG['LINK_REGEX'], message.content):
                 view = DashboardView(url=message.content, trigger_message_id=message.id)

@@ -52,7 +52,6 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
     
     # Status Phase Tracking
     current_phase = {"value": "SEARCHING"}
-
     last_update = {"time": 0}
 
     def progress_handler(d):
@@ -85,8 +84,7 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
                 status_hook({"phase": "PROCESSING"})
 
     # Ensure downloads directory exists
-    if not os.path.exists("downloads"):
-        os.makedirs("downloads")
+    os.makedirs("downloads", exist_ok=True)
 
     # Generate a unique filename to prevent collisions
     unique_id = str(uuid.uuid4())[:8]
@@ -103,11 +101,9 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
         ydl_opts['cookiefile'] = 'cookies.txt'
 
     if format_type == "video":
-        # Select best quality up to the requested one
         ydl_opts['format'] = f'bestvideo[height<={quality}]+bestaudio/best[height<={quality}]'
         ydl_opts['merge_output_format'] = 'mp4'
     elif format_type == "audio":
-        # Extract audio and convert to requested extension
         ydl_opts['format'] = 'bestaudio/best'
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
@@ -115,12 +111,11 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
             'preferredquality': '192',
         }]
     elif format_type == "picture":
-        # Strategy: Fetch highest quality thumbnail
         ydl_opts['writethumbnail'] = True
         ydl_opts['skip_download'] = True
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegThumbnailsConvertor',
-            'format': extension, # png, jpg, webp
+            'format': extension,
         }]
 
     try:
@@ -129,13 +124,19 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             result = ydl.extract_info(url, download=True)
-            # Find the actual final file path (might differ after conversion)
+
+            # Fix #6: Use requested_downloads for the real post-processor filepath
+            requested = result.get('requested_downloads')
+            if requested and len(requested) > 0:
+                actual_path = requested[0].get('filepath')
+                if actual_path and os.path.exists(actual_path):
+                    file_size_mb = os.path.getsize(actual_path) / (1024 * 1024)
+                    logger.info(f"Download complete (requested_downloads): {actual_path} ({file_size_mb:.2f} MB)")
+                    return actual_path, file_size_mb
+
+            # Fallback: derive path from prepare_filename + expected extension
             file_path = ydl.prepare_filename(result)
-            
-            # Post-processors might change the extension
             base, _ = os.path.splitext(file_path)
-            
-            # Handle standard naming variations from yt-dlp
             actual_path = file_path
             if format_type == "audio":
                 actual_path = f"{base}.{extension}"
@@ -146,17 +147,17 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
 
             if os.path.exists(actual_path):
                 file_size_mb = os.path.getsize(actual_path) / (1024 * 1024)
-                logger.info(f"Download complete: {actual_path} ({file_size_mb:.2f} MB)")
+                logger.info(f"Download complete (prepare_filename): {actual_path} ({file_size_mb:.2f} MB)")
                 return actual_path, file_size_mb
-            else:
-                # Fallback search
-                files = [os.path.join("downloads", f) for f in os.listdir("downloads")]
-                if files:
-                    actual_path = max(files, key=os.path.getmtime)
-                    file_size_mb = os.path.getsize(actual_path) / (1024 * 1024)
-                    logger.info(f"Download complete (fallback path): {actual_path} ({file_size_mb:.2f} MB)")
-                    return actual_path, file_size_mb
-                
+
+            # Last resort: newest file in downloads/ — only used if above both fail
+            files = [os.path.join("downloads", f) for f in os.listdir("downloads")]
+            if files:
+                actual_path = max(files, key=os.path.getmtime)
+                file_size_mb = os.path.getsize(actual_path) / (1024 * 1024)
+                logger.warning(f"Download complete (mtime fallback): {actual_path} ({file_size_mb:.2f} MB)")
+                return actual_path, file_size_mb
+
             raise Exception("File not found after successful download.")
     except Exception as e:
         logger.error(f"download_media failed: {e}")
@@ -205,11 +206,7 @@ def get_instagram_carousel(url):
     logger.info(f"Extracting Instagram carousel for {url}")
     
     try:
-        # Step 1: Extract shortcode
-        # Remove query params like ?img_index=
         clean_url = re.sub(r'[\?&]img_index=\d+', '', url)
-        
-        # Match /p/SHORTCODE/ or /reel/SHORTCODE/
         match = re.search(r'/(?:p|reel)/([^/?#&]+)', clean_url)
         if not match:
             logger.warning(f"Could not extract shortcode from {url}")
@@ -218,13 +215,9 @@ def get_instagram_carousel(url):
         shortcode = match.group(1)
         logger.info(f"Extracted shortcode: {shortcode}")
         
-        # Step 2: Get Instaloader instance
         L = _get_instaloader_instance()
-        
-        # Step 3: Fetch post via Post.from_shortcode
         post = instaloader.Post.from_shortcode(L.context, shortcode)
         
-        # Step 4: Extract media entries
         caption = post.caption[:100] if post.caption else "Instagram Post"
         entries = []
         
@@ -280,14 +273,20 @@ async def download_instagram_photo(url, index=None):
         to_download = [e for e in entries if e['index'] == index]
 
     results = []
-    if not os.path.exists("downloads"):
-        os.makedirs("downloads")
+    os.makedirs("downloads", exist_ok=True)
 
-    headers = {'Referer': 'https://www.instagram.com/'}
+    # Fix #7: Add User-Agent so Instagram doesn't block the request
+    headers = {
+        'Referer': 'https://www.instagram.com/',
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Safari/537.36'
+        ),
+    }
     async with aiohttp.ClientSession(headers=headers) as session:
         for entry in to_download:
             try:
-                # Sanitize title
                 clean_title = re.sub(r'[^\w\-_\. ]', '_', entry['title'])[:30]
                 short_hash = hashlib.md5(entry['url'].encode()).hexdigest()[:8]
                 ext = entry.get('ext', 'jpg')
@@ -301,6 +300,8 @@ async def download_instagram_photo(url, index=None):
                             f.write(content)
                         results.append(file_path)
                         logger.info(f"Downloaded Instagram {media_type}: {file_path}")
+                    else:
+                        logger.warning(f"Instagram returned HTTP {resp.status} for entry {entry['index']}")
             except Exception as e:
                 logger.error(f"Failed to download photo {entry['index']}: {e}")
     
