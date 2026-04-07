@@ -156,6 +156,9 @@ def get_instagram_carousel(url):
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
+            logger.info(f"Instagram info keys: {list(info.keys())}")
+            logger.info(f"Instagram _type: {info.get('_type')} | entries count: {len(info.get('entries', []))} | thumbnails count: {len(info.get('thumbnails', []))}")
+
             if not info:
                 return []
             
