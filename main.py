@@ -4,6 +4,7 @@ import os
 import asyncio
 import aiohttp
 import time
+import pickle
 from aiohttp import web
 from discord.ext import commands, tasks
 import re
@@ -23,6 +24,56 @@ import ui
 import downloader
 import file_server
 from constants import BOT_NAME
+
+
+# ---------------------------------------------------------------------------
+# Instagram session helper
+# ---------------------------------------------------------------------------
+
+def _inject_instagram_sessionid():
+    """
+    Reads the Instaloader session file and writes/updates the sessionid
+    cookie into /app/cookies.txt (Netscape format) so that yt-dlp and
+    the HTML scraper can authenticate with Instagram.
+    Called once at startup — safe to call on every restart.
+    """
+    session_file = "/app/session/session-giano.126"
+    cookies_file = "/app/cookies.txt"
+
+    if not os.path.exists(session_file):
+        logger.warning(f"Instagram session file not found: {session_file}")
+        return
+
+    try:
+        with open(session_file, "rb") as f:
+            session = pickle.load(f)
+
+        sessionid = session.get("sessionid")
+        if not sessionid:
+            logger.warning("sessionid not found in Instaloader session file")
+            return
+
+        expires = int(time.time()) + 60 * 60 * 24 * 365  # 1 year
+        new_line = f".instagram.com\tTRUE\t/\tTRUE\t{expires}\tsessionid\t{sessionid}"
+
+        # Read existing cookies, strip any old sessionid lines, append new one
+        existing_lines = []
+        if os.path.exists(cookies_file):
+            with open(cookies_file, "r") as f:
+                existing_lines = [
+                    l for l in f.read().splitlines()
+                    if not ("instagram.com" in l and "\tsessionid\t" in l)
+                ]
+
+        with open(cookies_file, "w") as f:
+            f.write("\n".join(existing_lines))
+            f.write("\n" + new_line + "\n")
+
+        logger.info("Instagram sessionid injected into cookies.txt")
+
+    except Exception as e:
+        logger.error(f"Failed to inject Instagram sessionid: {e}")
+
 
 # --- TOKEN-AUTHENTICATED FILE SERVER ---
 async def _handle_download(request: web.Request) -> web.Response:
@@ -68,7 +119,6 @@ class MediaBot(commands.Bot):
         intents.message_content = True
         super().__init__(command_prefix="!", intents=intents, help_command=None)
         self.status_index = 0
-        # Fix #9: Guard flag so on_ready only runs once (not on every reconnect)
         self._ready_sent = False
         self.statuses = [
             "Watching for links... 🔍",
@@ -78,16 +128,19 @@ class MediaBot(commands.Bot):
         ]
 
     async def setup_hook(self):
+        # Inject Instagram session cookies before anything else starts
+        _inject_instagram_sessionid()
+
         self.add_view(DashboardView())
         self.status_rotation.start()
         self.cleanup_task.start()
         await start_server()
-        
+
         from cogs.general import General
         from cogs.admin import Admin
         await self.add_cog(General(self))
         await self.add_cog(Admin(self))
-        
+
         logger.info("Bot setup completed.")
 
     @tasks.loop(seconds=CONFIG.get("STATUS_ROTATION_SPEED", 10))
@@ -127,7 +180,6 @@ class MediaBot(commands.Bot):
         await self.wait_until_ready()
 
     async def on_ready(self):
-        # Fix #9: Prevent on_ready from running again after a Discord reconnect
         if self._ready_sent:
             logger.info(f"Reconnected as {self.user} — skipping dashboard re-post.")
             return
@@ -136,7 +188,6 @@ class MediaBot(commands.Bot):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
         logger.info(f"Targeting Channel ID: {CONFIG['CHANNEL_ID']}")
 
-        # Fix #8: Run cleanup immediately on first start instead of waiting 24h
         logger.info("Running initial cleanup on startup...")
         await self.cleanup_task()
 
@@ -172,7 +223,6 @@ class MediaBot(commands.Bot):
         await self.process_commands(message)
 
     async def on_command_error(self, ctx, error):
-        """Silently ignore unknown !commands."""
         if isinstance(error, commands.CommandNotFound):
             return
         raise error
