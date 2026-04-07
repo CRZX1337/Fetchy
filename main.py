@@ -36,9 +36,16 @@ def _inject_instagram_sessionid():
     cookie into /app/cookies.txt (Netscape format) so that yt-dlp and
     the HTML scraper can authenticate with Instagram.
     Called once at startup — safe to call on every restart.
+
+    The session file path is read from the INSTAGRAM_SESSION_FILE env var.
+    If the env var is not set, this function does nothing.
     """
-    session_file = "/app/session/session-giano.126"
-    cookies_file = "/app/cookies.txt"
+    session_file = os.getenv("INSTAGRAM_SESSION_FILE", "").strip()
+    cookies_file = os.getenv("INSTAGRAM_COOKIES_FILE", "/app/cookies.txt").strip()
+
+    if not session_file:
+        logger.info("INSTAGRAM_SESSION_FILE not set — skipping session injection.")
+        return
 
     if not os.path.exists(session_file):
         logger.warning(f"Instagram session file not found: {session_file}")
@@ -94,7 +101,7 @@ async def _handle_download(request: web.Request) -> web.Response:
         )
     filepath, expiry = entry
     if time.time() > expiry:
-        del file_server._file_tokens[token]
+        file_server._file_tokens.pop(token, None)
         return web.Response(
             status=403,
             content_type="application/json",
@@ -172,8 +179,19 @@ class MediaBot(commands.Bot):
 
         expired_tokens = [t for t, (_, exp) in file_server._file_tokens.items() if now > exp]
         for t in expired_tokens:
-            del file_server._file_tokens[t]
+            file_server._file_tokens.pop(t, None)
         logger.info(f"Cleared {len(expired_tokens)} expired file tokens.")
+
+        # Clean up stale active_download entries (TTL = 30 minutes)
+        stale_downloads = [
+            uid for uid, ts in ui._active_download_started.items()
+            if now - ts > ui.ACTIVE_DOWNLOAD_TTL
+        ]
+        for uid in stale_downloads:
+            ui._active_download_started.pop(uid, None)
+            ui.active_downloads.pop(uid, None)
+        if stale_downloads:
+            logger.warning(f"Cleared {len(stale_downloads)} stale active_download entries (TTL exceeded).")
 
     @status_rotation.before_loop
     async def before_status_rotation(self):

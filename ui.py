@@ -22,7 +22,14 @@ def is_valid_url(url: str) -> bool:
 logger = logging.getLogger("MediaBot.UI")
 
 # --- RATE LIMITING ---
-active_downloads = {}  # user_id -> count
+# active_downloads: user_id -> current active download count
+# _active_download_started: user_id -> timestamp when the FIRST slot was taken
+# If a bot crash left a counter stuck, the cleanup_task in main.py will clear it
+# after ACTIVE_DOWNLOAD_TTL seconds.
+active_downloads: dict[int, int] = {}
+_active_download_started: dict[int, float] = {}
+ACTIVE_DOWNLOAD_TTL = 30 * 60  # 30 minutes — maximum realistic download duration
+
 MAX_CONCURRENT_PER_USER = 2
 _user_cooldowns: dict[int, float] = {}
 
@@ -36,6 +43,23 @@ def check_cooldown(user_id: int) -> int | None:
         return None
     elapsed = time.time() - _user_cooldowns.get(user_id, 0)
     return int(30 - elapsed) if elapsed < 30 else None
+
+def _increment_active(user_id: int) -> None:
+    """Increment active download counter and record start time for TTL tracking."""
+    count = active_downloads.get(user_id, 0) + 1
+    active_downloads[user_id] = count
+    if count == 1:
+        # Record when this user's first active slot was opened
+        _active_download_started[user_id] = time.time()
+
+def _decrement_active(user_id: int) -> None:
+    """Decrement active download counter and clean up TTL tracker when idle."""
+    count = max(0, active_downloads.get(user_id, 1) - 1)
+    if count == 0:
+        active_downloads.pop(user_id, None)
+        _active_download_started.pop(user_id, None)
+    else:
+        active_downloads[user_id] = count
 
 class SupportInformationEmbed(discord.Embed):
     """Custom embed for supported sites."""
@@ -262,7 +286,7 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
             ephemeral=True
         )
 
-    active_downloads[user_id] = active_downloads.get(user_id, 0) + 1
+    _increment_active(user_id)
     
     try:
         embed = discord.Embed(
@@ -361,7 +385,7 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
             embed.color = discord.Color.red()
         await interaction.edit_original_response(embed=embed, view=None)
     finally:
-        active_downloads[user_id] = max(0, active_downloads.get(user_id, 1) - 1)
+        _decrement_active(user_id)
 
 class DownloadModal(discord.ui.Modal):
     """Prompt for a URL when no link was auto-detected."""
