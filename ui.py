@@ -58,23 +58,16 @@ class QualitySelectView(discord.ui.View):
         self.prompt_message_id = prompt_message_id
         
         options = []
-        # Task 2: Only show resolutions that actually exist in the video
         if not heights:
-            # Fallback for when height detection fails but link is valid
             options.append(discord.SelectOption(label="Best Available", value="best", description="High-Def or Original"))
         else:
-            # Defined standard breakpoints to keep list clean
             standard_breakpoints = {360: "SD", 480: "HQ", 720: "HD", 1080: "Full HD", 1440: "2K", 2160: "4K"}
-            
-            # Sort heights descending
             sorted_heights = sorted(list(set(heights)), reverse=True)
-            
             for h in sorted_heights:
                 label = f"{h}p"
                 desc = standard_breakpoints.get(h, "Auto")
                 options.append(discord.SelectOption(label=label, value=str(h), description=desc))
         
-        # Add the dropdown
         self.add_item(self.Dropdown(options))
 
     class Dropdown(discord.ui.Select):
@@ -128,10 +121,9 @@ class PictureFormatView(discord.ui.View):
         await process_action(interaction, self.url, "picture", extension=select.values[0], trigger_message_id=self.trigger_message_id, prompt_message_id=self.prompt_message_id)
 
 async def process_action(interaction: discord.Interaction, url: str, format_type: str, quality: str = "1080", extension: str = None, trigger_message_id: int = None, prompt_message_id: int = None):
-    """Global processor for the final download stage with rate limiting."""
+    """Global processor for the final download stage with rate limiting and status updates."""
     user_id = interaction.user.id
     
-    # Task 3: Per-user Rate Limiting
     if active_downloads.get(user_id, 0) >= MAX_CONCURRENT_PER_USER:
         return await interaction.response.send_message(
             "⏳ **Whoa there!** You already have 2 active downloads. Please wait for one to finish! 🚦",
@@ -152,19 +144,31 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
         else:
             await interaction.edit_original_response(content=None, embed=embed, view=None)
 
-        # 2. RUN DOWNLOAD (blocking, yt-dlp)
+        # 2. RUN DOWNLOAD with status hook
+        loop = asyncio.get_event_loop()
+        
+        async def update_status_ui(phase):
+            mapping = {
+                "SEARCHING": "🔍 Locating media...",
+                "DOWNLOADING": "📥 Downloading data...",
+                "PROCESSING": "⚙️ Processing file..."
+            }
+            embed.description = mapping.get(phase, "Working...")
+            await interaction.edit_original_response(embed=embed)
+            
+        def status_callback(status):
+            asyncio.run_coroutine_threadsafe(update_status_ui(status), loop)
+
         file_path, file_size_mb = await asyncio.to_thread(
-            downloader.download_media, url, format_type, quality, extension or "mp3"
+            downloader.download_media, url, format_type, quality, extension or "mp3", status_callback
         )
 
         if not file_path:
             raise Exception("No file was returned from the downloader.")
 
         # 3. HANDLE DELIVERY
-        # Large File Fallback (>10MB)
         if file_size_mb > 10.0:
             filename = os.path.basename(file_path)
-            # Use configured BASE_URL
             base_url = CONFIG.get("BASE_URL", "http://localhost:8080").rstrip('/')
             download_url = f"{base_url}/downloads/{filename}"
             embed.title = "💾 File Ready (Large)"
@@ -172,33 +176,29 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
             embed.color = discord.Color.green()
             await interaction.edit_original_response(embed=embed)
         else:
-            # Direct Send
             file = discord.File(file_path)
             await interaction.channel.send(content=f"✨ **Here is your {format_type}!** Enjoy!", file=file)
             embed.title = "✅ Complete!"
             embed.description = "Your file has been delivered to the channel."
             embed.color = discord.Color.green()
             await interaction.edit_original_response(embed=embed)
-            # Cleanup small files immediately
             if os.path.exists(file_path):
                 os.remove(file_path)
 
-        # 4. UX CLEANUP: Auto-delete the trigger messages
+        # 4. UX CLEANUP
         if trigger_message_id:
             try:
                 msg = await interaction.channel.fetch_message(trigger_message_id)
                 await msg.delete()
                 logger.info(f"Trigger message {trigger_message_id} deleted.")
-            except Exception as e:
-                logger.warning(f"Could not delete trigger message: {e}")
+            except Exception: pass
 
         if prompt_message_id:
             try:
                 p_msg = await interaction.channel.fetch_message(prompt_message_id)
                 await p_msg.delete()
                 logger.info(f"Prompt message {prompt_message_id} deleted.")
-            except Exception as e:
-                logger.warning(f"Could not delete prompt message: {e}")
+            except Exception: pass
 
     except Exception as e:
         logger.error(f"UI Download Error: {e}")
@@ -214,7 +214,6 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
         embed.color = discord.Color.red()
         await interaction.edit_original_response(embed=embed)
     finally:
-        # Decrement counter
         active_downloads[user_id] = max(0, active_downloads.get(user_id, 1) - 1)
 
 class DownloadModal(discord.ui.Modal):

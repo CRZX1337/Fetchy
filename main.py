@@ -79,6 +79,25 @@ class MediaBot(commands.Bot):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
         logger.info(f"Targeting Channel ID: {CONFIG['CHANNEL_ID']}")
 
+        # Restore automatic dashboard posting
+        channel = self.get_channel(CONFIG["CHANNEL_ID"])
+        if channel:
+            try:
+                await channel.purge(limit=100)
+            except Exception:
+                pass
+            
+            embed = discord.Embed(
+                title="📥 Fetchy | Your Personal Media Assistant",
+                description="I am here to assist you with high-performance media extraction and management. Enjoy a fully private and anonymous experience across all your interactions.\n\nHow to get started:\n1. Select a format below (Video, Audio, or Picture).\n2. Provide the source link in the secure input field.\n3. Choose your quality/format and I'll handle the rest! 🚀\n\n\n✨ Key Benefits: High Performance - Large File Support - Zero Tracking\n\n🖥️ Source Code: GitHub Repository",
+                color=discord.Color.blurple()
+            )
+            embed.set_thumbnail(url="https://raw.githubusercontent.com/CRZX1337/Fetchy/main/media/logo.png")
+            embed.set_footer(text="Handcrafted for efficiency - System fully operational")
+            
+            await channel.send(embed=embed, view=DashboardView())
+            logger.info("Dashboard posted successfully.")
+
     async def on_message(self, message):
         # Ignore own messages
         if message.author == self.user:
@@ -97,7 +116,6 @@ class MediaBot(commands.Bot):
             import re
             if re.search(CONFIG['LINK_REGEX'], message.content):
                 # Send the dashboard as a reply to the link message
-                # Passing the message_id to DashboardView enables auto-deletion later
                 view = DashboardView(url=message.content, trigger_message_id=message.id)
                 await message.reply(
                     f"Hello, {message.author.display_name}! I noticed you shared a media link.\n"

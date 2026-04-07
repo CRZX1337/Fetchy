@@ -35,13 +35,25 @@ def get_media_info(url):
         logger.warning(f"get_media_info failed for {url}: {e}")
         return None
 
-def download_media(url, format_type, quality="1080", extension="mp3"):
+def download_media(url, format_type, quality="1080", extension="mp3", status_hook=None):
     """
     Downloads media from a URL based on user preferences.
     Returns (file_path, file_size_mb).
     """
     logger.info(f"Downloading {format_type} from {url} (Quality: {quality}, Ext: {extension})")
     
+    # Status Phase Tracking
+    current_phase = {"value": "SEARCHING"}
+
+    def progress_handler(d):
+        if status_hook is not None:
+            if d['status'] == "downloading" and current_phase["value"] != "DOWNLOADING":
+                current_phase["value"] = "DOWNLOADING"
+                status_hook("DOWNLOADING")
+            elif d['status'] == "finished" and current_phase["value"] != "PROCESSING":
+                current_phase["value"] = "PROCESSING"
+                status_hook("PROCESSING")
+
     # Ensure downloads directory exists
     if not os.path.exists("downloads"):
         os.makedirs("downloads")
@@ -54,6 +66,7 @@ def download_media(url, format_type, quality="1080", extension="mp3"):
         'quiet': True,
         'no_warnings': True,
         'outtmpl': output_tpl,
+        'progress_hooks': [progress_handler],
     }
 
     if format_type == "video":
@@ -70,7 +83,6 @@ def download_media(url, format_type, quality="1080", extension="mp3"):
         }]
     elif format_type == "picture":
         # Note: yt-dlp generally downloads the 'best' available source.
-        # Images are often treated as single-frame videos or static files
         ydl_opts['format'] = 'best'
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegVideoConvertor',
@@ -78,12 +90,15 @@ def download_media(url, format_type, quality="1080", extension="mp3"):
         }]
 
     try:
+        if status_hook is not None:
+            status_hook("SEARCHING")
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             result = ydl.extract_info(url, download=True)
             # Find the actual final file path (might differ after conversion)
             file_path = ydl.prepare_filename(result)
             
-            # Post-processors might change the extension (e.g. mkv -> mp4 or audio conversion)
+            # Post-processors might change the extension
             base, _ = os.path.splitext(file_path)
             
             # Handle standard naming variations from yt-dlp
@@ -100,8 +115,7 @@ def download_media(url, format_type, quality="1080", extension="mp3"):
                 logger.info(f"Download complete: {actual_path} ({file_size_mb:.2f} MB)")
                 return actual_path, file_size_mb
             else:
-                # If the above fails, search for the most recently modified file in downloads
-                # as a last resort fallback for complex outputs
+                # Fallback search
                 files = [os.path.join("downloads", f) for f in os.listdir("downloads")]
                 if files:
                     actual_path = max(files, key=os.path.getmtime)
