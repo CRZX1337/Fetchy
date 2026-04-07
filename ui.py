@@ -25,6 +25,11 @@ active_downloads = {}  # user_id -> count
 MAX_CONCURRENT_PER_USER = 2
 _user_cooldowns: dict[int, float] = {}
 
+def check_cooldown(user_id: int) -> int | None:
+    """Returns remaining wait seconds if on cooldown, else None."""
+    elapsed = time.time() - _user_cooldowns.get(user_id, 0)
+    return int(30 - elapsed) if elapsed < 30 else None
+
 class SupportInformationEmbed(discord.Embed):
     """Custom embed for supported sites."""
     def __init__(self):
@@ -112,9 +117,8 @@ class InstagramCarouselView(discord.ui.View):
 
     def create_callback(self, index):
         async def callback(interaction: discord.Interaction):
-            elapsed = time.time() - _user_cooldowns.get(interaction.user.id, 0)
-            if elapsed < 30:
-                wait = int(30 - elapsed)
+            wait = check_cooldown(interaction.user.id)
+            if wait:
                 return await interaction.response.send_message(
                     f"⏳ Please wait **{wait}s** before starting a new download.",
                     ephemeral=True
@@ -134,9 +138,8 @@ class InstagramCarouselView(discord.ui.View):
         return callback
 
     async def download_all_callback(self, interaction: discord.Interaction):
-        elapsed = time.time() - _user_cooldowns.get(interaction.user.id, 0)
-        if elapsed < 30:
-            wait = int(30 - elapsed)
+        wait = check_cooldown(interaction.user.id)
+        if wait:
             return await interaction.response.send_message(
                 f"⏳ Please wait **{wait}s** before starting a new download.",
                 ephemeral=True
@@ -377,9 +380,8 @@ class DownloadModal(discord.ui.Modal):
         if not is_valid_url(url):
             await interaction.response.send_message("❌ Invalid URL! Please provide a valid http or https link.", ephemeral=True)
             return
-        elapsed = time.time() - _user_cooldowns.get(interaction.user.id, 0)
-        if elapsed < 30:
-            wait = int(30 - elapsed)
+        wait = check_cooldown(interaction.user.id)
+        if wait:
             return await interaction.response.send_message(
                 f"⏳ Please wait **{wait}s** before starting a new download.",
                 ephemeral=True
@@ -396,9 +398,8 @@ class DashboardView(discord.ui.View):
 
     @discord.ui.button(label="🎥 Video", style=discord.ButtonStyle.primary, custom_id="fetchy_video")
     async def video(self, interaction: discord.Interaction, button: discord.ui.Button):
-        elapsed = time.time() - _user_cooldowns.get(interaction.user.id, 0)
-        if elapsed < 30:
-            wait = int(30 - elapsed)
+        wait = check_cooldown(interaction.user.id)
+        if wait:
             return await interaction.response.send_message(
                 f"⏳ Please wait **{wait}s** before starting a new download.",
                 ephemeral=True
@@ -411,9 +412,8 @@ class DashboardView(discord.ui.View):
 
     @discord.ui.button(label="🎵 Audio", style=discord.ButtonStyle.primary, custom_id="fetchy_audio")
     async def audio(self, interaction: discord.Interaction, button: discord.ui.Button):
-        elapsed = time.time() - _user_cooldowns.get(interaction.user.id, 0)
-        if elapsed < 30:
-            wait = int(30 - elapsed)
+        wait = check_cooldown(interaction.user.id)
+        if wait:
             return await interaction.response.send_message(
                 f"⏳ Please wait **{wait}s** before starting a new download.",
                 ephemeral=True
@@ -426,9 +426,8 @@ class DashboardView(discord.ui.View):
 
     @discord.ui.button(label="🖼️ Picture", style=discord.ButtonStyle.primary, custom_id="fetchy_picture")
     async def picture(self, interaction: discord.Interaction, button: discord.ui.Button):
-        elapsed = time.time() - _user_cooldowns.get(interaction.user.id, 0)
-        if elapsed < 30:
-            wait = int(30 - elapsed)
+        wait = check_cooldown(interaction.user.id)
+        if wait:
             return await interaction.response.send_message(
                 f"⏳ Please wait **{wait}s** before starting a new download.",
                 ephemeral=True
