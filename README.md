@@ -45,7 +45,7 @@ Fetchy can be tuned via the `config.json` file in the root directory:
 
 | Key | Description | Default |
 | :--- | :--- | :--- |
-| `CHANNEL_ID` | The ID of the Discord channel for the dashboard. | `1491040447370362980` |
+| `CHANNEL_ID` | The ID of the Discord channel for the dashboard. | `YOUR_DISCORD_CHANNEL_ID` |
 | `STATUS_ROTATION_SPEED` | Seconds between status changes. | `10` |
 | `LINK_REGEX` | Pattern for automatic link detection. | *(Common platforms)* |
 
