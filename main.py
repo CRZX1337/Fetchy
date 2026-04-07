@@ -12,6 +12,10 @@ import re
 import json
 import time
 
+# --- LOGGING SETUP ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("MediaBot")
+
 # --- CONFIGURATION LOADING ---
 try:
     with open("config.json", "r") as f:
@@ -26,10 +30,6 @@ except Exception as e:
 
 CHANNEL_ID = CONFIG.get("CHANNEL_ID")
 LINK_REGEX = CONFIG.get("LINK_REGEX")
-
-# --- LOGGING SETUP ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("MediaBot")
 
 class MediaBot(commands.Bot):
     def __init__(self):
