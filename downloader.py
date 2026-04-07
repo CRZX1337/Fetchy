@@ -147,6 +147,7 @@ def get_instagram_carousel(url):
         'quiet': True,
         'no_warnings': True,
         'extract_flat': False, # We need entries info
+        'ignore_no_formats_error': True
     }
     if os.path.exists("cookies.txt"):
         ydl_opts['cookiefile'] = 'cookies.txt'
@@ -205,7 +206,7 @@ async def download_instagram_photo(url, index=None):
             try:
                 # Sanitize title
                 clean_title = re.sub(r'[^\w\-_\. ]', '_', entry['title'])[:30]
-                short_hash = hashlib.mdsafe_hex(entry['url'].encode(), 4) if hasattr(hashlib, 'mdsafe_hex') else hashlib.md5(entry['url'].encode()).hexdigest()[:8]
+                short_hash = hashlib.md5(entry['url'].encode()).hexdigest()[:8]
                 file_path = f"downloads/{clean_title}_{short_hash}.jpg"
 
                 async with session.get(entry['url']) as resp:

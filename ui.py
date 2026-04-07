@@ -43,6 +43,19 @@ async def start_analysis(interaction: discord.Interaction, url: str, format_requ
         await interaction.edit_original_response(content="❌ Invalid URL! Please provide a valid http or https link.")
         return
 
+    # Early return for Instagram Carousels (must be before get_media_info)
+    if "instagram.com/p/" in url:
+        entries = await asyncio.to_thread(downloader.get_instagram_carousel, url)
+        if entries:
+            view = InstagramCarouselView(url, entries, trigger_message_id, prompt_message_id)
+            await interaction.edit_original_response(
+                content=f"📸 **Found Instagram Carousel:** {len(entries)} Photos\nSelect a photo or download them all:",
+                view=view
+            )
+        else:
+            await interaction.edit_original_response(content="❌ **Error:** I couldn't find any photos in that Instagram post.")
+        return
+
     # 1. ANALYZE LINK
     info = downloader.get_media_info(url)
     if not info:
@@ -59,13 +72,6 @@ async def start_analysis(interaction: discord.Interaction, url: str, format_requ
         view = AudioFormatView(url, trigger_message_id, prompt_message_id)
         await interaction.edit_original_response(content=f"🎵 **Found:** *{title_short}*\nSelect Audio Format:", view=view)
     elif format_requested == "picture":
-        if "instagram.com/p/" in url:
-            entries = await asyncio.to_thread(downloader.get_instagram_carousel, url)
-            if len(entries) > 1:
-                view = InstagramCarouselView(url, entries, trigger_message_id, prompt_message_id)
-                await interaction.edit_original_response(content=f"📸 **Found Instagram Carousel:** {len(entries)} Photos\nSelect a photo or download them all:", view=view)
-                return
-
         view = PictureFormatView(url, trigger_message_id, prompt_message_id)
         await interaction.edit_original_response(content=f"🖼️ **Found:** *{title_short}*\nSelect Image Format:", view=view)
 
