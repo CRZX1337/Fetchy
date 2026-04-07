@@ -56,7 +56,7 @@ class AudioFormatView(discord.ui.View):
     @discord.ui.select(
         placeholder="Choose audio format...",
         options=[
-            discord.SelectOption(label="MP3 (Standard)", value="mp3", default=True),
+            discord.SelectOption(label="MP3 (Standard)", value="mp3"),
             discord.SelectOption(label="WAV (Lossless)", value="wav"),
             discord.SelectOption(label="FLAC (High Fidelity)", value="flac"),
             discord.SelectOption(label="M4A (Apple)", value="m4a")
@@ -74,7 +74,7 @@ class PictureFormatView(discord.ui.View):
     @discord.ui.select(
         placeholder="Choose image format...",
         options=[
-            discord.SelectOption(label="PNG (Lossless)", value="png", default=True),
+            discord.SelectOption(label="PNG (Lossless)", value="png"),
             discord.SelectOption(label="JPG (Fast)", value="jpg"),
             discord.SelectOption(label="WEBP (Modern)", value="webp")
         ]
