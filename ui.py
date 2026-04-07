@@ -6,6 +6,14 @@ import urllib.parse
 from config import CONFIG
 import downloader
 
+def is_valid_url(url: str) -> bool:
+    """Validates if a string is a proper http/https URL."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+    except Exception:
+        return False
+
 # --- LOGGING SETUP ---
 logger = logging.getLogger("MediaBot.UI")
 
@@ -31,6 +39,10 @@ async def start_analysis(interaction: discord.Interaction, url: str, format_requ
     if not interaction.response.is_done():
         await interaction.response.send_message("🔍 **Analyzing content...** Please wait.", ephemeral=True)
     
+    if not is_valid_url(url):
+        await interaction.edit_original_response(content="❌ Invalid URL! Please provide a valid http or https link.")
+        return
+
     # 1. ANALYZE LINK
     info = downloader.get_media_info(url)
     if not info:
@@ -233,7 +245,11 @@ class DownloadModal(discord.ui.Modal):
         self.add_item(self.url_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await start_analysis(interaction, self.url_input.value, self.format_type)
+        url = self.url_input.value
+        if not is_valid_url(url):
+            await interaction.response.send_message("❌ Invalid URL! Please provide a valid http or https link.", ephemeral=True)
+            return
+        await start_analysis(interaction, url, self.format_type)
 
 class DashboardView(discord.ui.View):
     """The central interactive hub for Fetchy."""
