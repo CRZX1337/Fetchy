@@ -1,0 +1,5 @@
+{
+  "CHANNEL_ID": 1491040447370362980,
+  "STATUS_ROTATION_SPEED": 10,
+  "LINK_REGEX": "(https?://)?(www\\.)?(youtube\\.com|youtu\\.be|tiktok\\.com|twitter\\.com|x\\.com|instagram\\.com)/[^\\s]+"
+}

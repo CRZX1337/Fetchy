@@ -69,9 +69,19 @@ class DownloadModal(discord.ui.Modal):
                 await interaction.edit_original_response(embed=embed, attachments=[discord_file])
                 
         except Exception as e:
-            logger.error(f"Error at URL {self.url_input.value}: {str(e)}")
-            embed.title = "❌ I ran into a small issue processing your request"
-            embed.description = f"Here's what happened on my end:\n```{str(e)[:700]}```"
+            error_str = str(e)
+            logger.error(f"Error at URL {self.url_input.value}: {error_str}")
+            
+            # Specific Mapper for yt-dlp exceptions
+            if "Private video" in error_str:
+                friendly_error = "I'm sorry, that video seems to be private! 🔒 I can't access restricted content."
+            elif "Unsupported URL" in error_str:
+                friendly_error = "Oops! I don't recognize this platform yet. Maybe check my supported sites? 🤔"
+            else:
+                friendly_error = "Something went wrong while I was fetching your file. I'll try to do better next time! 😓"
+                
+            embed.title = "❌ Request issue"
+            embed.description = friendly_error
             embed.color = discord.Color.red()
             await interaction.edit_original_response(embed=embed, attachments=[])
             

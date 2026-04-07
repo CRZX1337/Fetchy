@@ -9,15 +9,27 @@ from dotenv import load_dotenv
 from ui import DashboardView
 
 import re
+import json
+import time
+
+# --- CONFIGURATION LOADING ---
+try:
+    with open("config.json", "r") as f:
+        CONFIG = json.load(f)
+except Exception as e:
+    logger.warning(f"Could not load config.json: {e}. Using hardcoded defaults.")
+    CONFIG = {
+        "CHANNEL_ID": 1491040447370362980,
+        "STATUS_ROTATION_SPEED": 10,
+        "LINK_REGEX": r'(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|twitter\.com|x\.com|instagram\.com)/[^\s]+'
+    }
+
+CHANNEL_ID = CONFIG.get("CHANNEL_ID")
+LINK_REGEX = CONFIG.get("LINK_REGEX")
 
 # --- LOGGING SETUP ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("MediaBot")
-
-CHANNEL_ID = 1491040447370362980
-
-# Regex for detecting common media links
-LINK_REGEX = r'(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|twitter\.com|x\.com|instagram\.com)/[^\s]+'
 
 class MediaBot(commands.Bot):
     def __init__(self):
@@ -62,16 +74,47 @@ class MediaBot(commands.Bot):
 
     @tasks.loop(seconds=10)
     async def status_task(self):
-        """Task to rotate bot status every 10 seconds."""
+        """Task to rotate bot status."""
         await self.change_presence(activity=next(self.activities))
+
+    @tasks.loop(hours=24)
+    async def cleanup_task(self):
+        """Background task to clean up old files in the downloads directory."""
+        temp_dir = os.path.join(os.getcwd(), "downloads")
+        if not os.path.exists(temp_dir):
+            return
+            
+        logger.info("Starting automated background cleanup...")
+        count = 0
+        now = time.time()
+        
+        try:
+            for filename in os.listdir(temp_dir):
+                file_path = os.path.join(temp_dir, filename)
+                if os.path.isfile(file_path):
+                    # If file is older than 1 hour (3600 seconds)
+                    if now - os.path.getmtime(file_path) > 3600:
+                        os.remove(file_path)
+                        count += 1
+            if count > 0:
+                logger.info(f"Cleanup complete. Deleted {count} abandoned files.")
+        except Exception as e:
+            logger.error(f"Cleanup task failed: {e}")
 
     async def on_ready(self):
         logger.info(f"Bot is online as {self.user} (ID: {self.user.id})")
         
-        # Start the background status task if it's not already running
+        # Adjust rotation speed from config
+        rotation_speed = CONFIG.get("STATUS_ROTATION_SPEED", 10)
+        self.status_task.change_interval(seconds=rotation_speed)
+
+        # Start the background tasks
         if not self.status_task.is_running():
             self.status_task.start()
-            logger.info("Dynamic status rotation started.")
+        
+        if not self.cleanup_task.is_running():
+            self.cleanup_task.start()
+            logger.info("Maintenance cleanup task scheduled every 24 hours.")
         
         # 2. Setup the dedicated Dashboard Channel
         channel = self.get_channel(CHANNEL_ID)
