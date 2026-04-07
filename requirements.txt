@@ -1,8 +1,11 @@
 # Core Discord library
 discord.py==2.3.2
 
-# Media downloader (pin minor to avoid breaking API changes)
-yt-dlp==2024.11.18
+# Media downloader — intentionally NOT pinned!
+# yt-dlp must always be up-to-date for YouTube compatibility.
+# Pinning yt-dlp causes "Requested format is not available" errors
+# because YouTube regularly changes its available formats.
+yt-dlp>=2025.1.1
 
 # Environment variable loading
 python-dotenv==1.0.0
