@@ -5,6 +5,7 @@ import logging
 import hashlib
 import re
 import time
+import threading
 import aiohttp
 import instaloader
 
@@ -42,7 +43,7 @@ def get_media_info(url):
         logger.warning(f"get_media_info failed for {url}: {e}")
         return None
 
-def download_media(url, format_type, quality="1080", extension="mp3", status_hook=None):
+def download_media(url, format_type, quality="1080", extension="mp3", status_hook=None, cancel_event: threading.Event = None):
     """
     Downloads media from a URL based on user preferences.
     Returns (file_path, file_size_mb).
@@ -59,6 +60,8 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
             return
         now = time.time()
         if d['status'] == "downloading":
+            if cancel_event and cancel_event.is_set():
+                raise Exception("Download cancelled by user.")
             if now - last_update["time"] < 2.0 and current_phase["value"] == "DOWNLOADING":
                 return
             last_update["time"] = now
@@ -74,9 +77,12 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
                 "total_mb": round(total / 1024 / 1024, 1),
                 "speed_mb": round(speed / 1024 / 1024, 2) if speed else 0,
             })
-        elif d['status'] == "finished" and current_phase["value"] != "PROCESSING":
-            current_phase["value"] = "PROCESSING"
-            status_hook({"phase": "PROCESSING"})
+        elif d['status'] == "finished":
+            if cancel_event and cancel_event.is_set():
+                raise Exception("Download cancelled by user.")
+            if current_phase["value"] != "PROCESSING":
+                current_phase["value"] = "PROCESSING"
+                status_hook({"phase": "PROCESSING"})
 
     # Ensure downloads directory exists
     if not os.path.exists("downloads"):

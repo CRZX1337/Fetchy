@@ -1,6 +1,7 @@
 import discord
 import logging
 import asyncio
+import threading
 import os
 import urllib.parse
 from config import CONFIG
@@ -209,6 +210,20 @@ class PictureFormatView(discord.ui.View):
     async def select_format(self, interaction: discord.Interaction, select: discord.ui.Select):
         await process_action(interaction, self.url, "picture", extension=select.values[0], trigger_message_id=self.trigger_message_id, prompt_message_id=self.prompt_message_id)
 
+class CancelView(discord.ui.View):
+    """Single Cancel button shown during active downloads."""
+    def __init__(self, cancel_event: threading.Event):
+        super().__init__(timeout=None)
+        self.cancel_event = cancel_event
+
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.danger)
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.cancel_event.set()
+        button.disabled = True
+        button.label = "Cancelling..."
+        await interaction.response.edit_message(view=self)
+
+
 async def process_action(interaction: discord.Interaction, url: str, format_type: str, quality: str = "1080", extension: str = None, trigger_message_id: int = None, prompt_message_id: int = None):
     """Global processor for the final download stage with rate limiting and status updates."""
     user_id = interaction.user.id
@@ -228,13 +243,14 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
             description="I'm processing your media Request. It will be ready in a moment!",
             color=discord.Color.yellow()
         )
-        if not interaction.response.is_done():
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-        else:
-            await interaction.edit_original_response(content=None, embed=embed, view=None)
-
         # 2. RUN DOWNLOAD with status hook
+        cancel_event = threading.Event()
+        cancel_view = CancelView(cancel_event)
         loop = asyncio.get_running_loop()
+        if not interaction.response.is_done():
+            await interaction.response.send_message(embed=embed, view=cancel_view, ephemeral=True)
+        else:
+            await interaction.edit_original_response(content=None, embed=embed, view=cancel_view)
         
         async def update_status_ui(payload):
             if isinstance(payload, dict):
@@ -266,7 +282,7 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
             asyncio.run_coroutine_threadsafe(update_status_ui(status), loop)
 
         file_path, file_size_mb = await asyncio.to_thread(
-            downloader.download_media, url, format_type, quality, extension or "mp3", status_callback
+            downloader.download_media, url, format_type, quality, extension or "mp3", status_callback, cancel_event
         )
 
         if not file_path:
@@ -281,16 +297,14 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
             embed.title = "💾 File Ready (Large)"
             embed.description = f"This file was too large for Discord (>10MB).\n[**Click here to Download**]({download_url})\n\n*(File expires in 24 hours)*"
             embed.color = discord.Color.green()
-            await interaction.edit_original_response(embed=embed)
+            await interaction.edit_original_response(embed=embed, view=None)
         else:
             file = discord.File(file_path)
-            # Deliver the file ephemerally
             await interaction.followup.send(content=f"✨ **Here is your {format_type}!** Enjoy!", file=file, ephemeral=True)
-            
             embed.title = "✅ Complete!"
             embed.description = "Your file has been delivered privately to you. 🔐"
             embed.color = discord.Color.green()
-            await interaction.edit_original_response(embed=embed)
+            await interaction.edit_original_response(embed=embed, view=None)
             if os.path.exists(file_path):
                 os.remove(file_path)
 
@@ -311,17 +325,21 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
 
     except Exception as e:
         logger.error(f"UI Download Error: {e}")
-        error_msg = "Something went wrong while I was fetching your file. I'll try to do better next time! 😓"
         e_str = str(e)
-        if "Private video" in e_str:
-            error_msg = "I'm sorry, that video seems to be private! 🔒 I can't access restricted content."
-        elif "Unsupported URL" in e_str:
-            error_msg = "Oops! I don't recognize this platform yet. Maybe check my supported sites? 🤔"
-        
-        embed.title = "❌ Error"
-        embed.description = error_msg
-        embed.color = discord.Color.red()
-        await interaction.edit_original_response(embed=embed)
+        if "cancelled by user" in e_str.lower():
+            embed.title = "🚫 Cancelled"
+            embed.description = "Download was cancelled."
+            embed.color = discord.Color.greyple()
+        else:
+            error_msg = "Something went wrong while I was fetching your file. I'll try to do better next time! 😓"
+            if "Private video" in e_str:
+                error_msg = "I'm sorry, that video seems to be private! 🔒 I can't access restricted content."
+            elif "Unsupported URL" in e_str:
+                error_msg = "Oops! I don't recognize this platform yet. Maybe check my supported sites? 🤔"
+            embed.title = "❌ Error"
+            embed.description = error_msg
+            embed.color = discord.Color.red()
+        await interaction.edit_original_response(embed=embed, view=None)
     finally:
         active_downloads[user_id] = max(0, active_downloads.get(user_id, 1) - 1)
 
