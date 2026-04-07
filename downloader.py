@@ -146,7 +146,7 @@ def get_instagram_carousel(url):
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        'extract_flat': False,
+        'extract_flat': True,
         'skip_download': True,
         'ignore_no_formats_error': True
     }
@@ -155,12 +155,15 @@ def get_instagram_carousel(url):
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False, process=True)
-            info = ydl.process_ie_result(info, download=False)
-
+            info = ydl.extract_info(url, download=False)
             if not info:
                 return []
             
+            logger.info(f"Raw entries: {info.get('entries', [])}")
+            logger.info(f"First entry sample: {info.get('entries', [None])[0]}")
+            for entry in info.get('entries', []):
+                logger.info(f"Entry keys: {entry.keys()} | url: {entry.get('url')} | thumbnail: {entry.get('thumbnail')} | thumbnails: {len(entry.get('thumbnails', []))}")
+
             title = info.get('title', 'Instagram Photo')
             entries = []
             
