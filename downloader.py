@@ -27,10 +27,6 @@ _IG_UA = (
 # ---------------------------------------------------------------------------
 
 def _load_cookies_dict() -> dict:
-    """
-    Reads /app/cookies.txt (Netscape format) and returns a dict of
-    name=value pairs for instagram.com cookies.
-    """
     cookies = {}
     if not os.path.exists(COOKIES_FILE):
         return cookies
@@ -51,7 +47,6 @@ def _load_cookies_dict() -> dict:
 
 
 def _cookies_header() -> str:
-    """Build Cookie: header string from cookies.txt."""
     c = _load_cookies_dict()
     if not c:
         return ""
@@ -206,10 +201,6 @@ def download_media(url, format_type, quality="1080", extension="mp3",
 # ---------------------------------------------------------------------------
 
 def _scrape_instagram_page(url: str) -> str | None:
-    """
-    Fetches the Instagram post page with a mobile UA + session cookies.
-    Returns raw HTML or None on failure.
-    """
     headers = {
         "User-Agent": _IG_UA,
         "Accept": "text/html,application/xhtml+xml",
@@ -234,7 +225,8 @@ def _find_items_in_json(obj):
     """Recursively find 'items' list from Instagram's embedded JSON."""
     if isinstance(obj, dict):
         if "xdt_api__v1__media__shortcode__web_info" in obj:
-            return obj["xdt_api__v1__media__shortcode__web_info"].get("items", [])
+            items = obj["xdt_api__v1__media__shortcode__web_info"].get("items") or []
+            return items
         for v in obj.values():
             r = _find_items_in_json(v)
             if r:
@@ -248,10 +240,6 @@ def _find_items_in_json(obj):
 
 
 def _extract_entries_from_html(html: str) -> list:
-    """
-    Parses embedded JSON from Instagram page HTML.
-    Returns list of entry dicts.
-    """
     scripts = re.findall(
         r'<script type="application/json"[^>]*>(.*?)</script>',
         html,
@@ -273,8 +261,8 @@ def _extract_entries_from_html(html: str) -> list:
         item = items[0]
         entries = []
 
-        # Carousel post
-        carousel = item.get("carousel_media", [])
+        # Carousel post — guard against explicit null from API
+        carousel = item.get("carousel_media") or []
         for i, media in enumerate(carousel, start=1):
             entry = _media_node_to_entry(media, i)
             if entry:
@@ -296,7 +284,7 @@ def _extract_entries_from_html(html: str) -> list:
 def _media_node_to_entry(node: dict, index: int) -> dict | None:
     """Convert a single media node to a normalised entry dict."""
     # Video
-    video_versions = node.get("video_versions", [])
+    video_versions = node.get("video_versions") or []
     if video_versions:
         best = max(video_versions, key=lambda v: v.get("width", 0))
         return {
@@ -308,7 +296,7 @@ def _media_node_to_entry(node: dict, index: int) -> dict | None:
         }
 
     # Image
-    candidates = node.get("image_versions2", {}).get("candidates", [])
+    candidates = (node.get("image_versions2") or {}).get("candidates") or []
     if candidates:
         best = candidates[0]  # first = highest resolution
         return {
