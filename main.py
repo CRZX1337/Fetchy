@@ -69,12 +69,12 @@ def build_dashboard_embed() -> discord.Embed:
     embed.add_field(
         name="🎯 Supported formats",
         value="🎥 Video · 🎵 Audio · 🖼️ Picture",
-        inline=True
+        inline=False
     )
     embed.add_field(
         name="✨ Features",
         value="Private · Large file support · Zero tracking",
-        inline=True
+        inline=False
     )
     embed.add_field(
         name="🖥️ Source",
@@ -98,7 +98,6 @@ class MediaBot(commands.Bot):
             "Helping users fetch media! ✨",
             "Type a link to get started! 🔗"
         ]
-        # Fix #2: track whether we've already posted the dashboard this session
         self._dashboard_posted = False
 
     async def setup_hook(self):
@@ -158,7 +157,6 @@ class MediaBot(commands.Bot):
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
         logger.info(f"Targeting Channel ID: {CONFIG['CHANNEL_ID']}")
 
-        # Fix #2: Only post dashboard once per process lifetime, not on every reconnect
         if self._dashboard_posted:
             logger.info("on_ready fired again (reconnect) — skipping dashboard repost.")
             return
