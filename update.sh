@@ -84,7 +84,7 @@ spinner_stop() {
   kill "$SPINNER_PID" 2>/dev/null
   wait "$SPINNER_PID" 2>/dev/null || true
   SPINNER_PID=""
-  printf "\r\033[2K"
+  printf '%b' "\r\033[2K"
 }
 
 # ─────────────────────────────────────────────
