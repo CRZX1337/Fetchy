@@ -1,6 +1,16 @@
-discord.py>=2.3.2
-yt-dlp>=2024.11.18
-python-dotenv>=1.0.0
-aiohttp>=3.9.0
-instaloader>=4.12.0
+# Core Discord library
+discord.py==2.3.2
 
+# Media downloader — intentionally NOT pinned!
+# yt-dlp must always be up-to-date for YouTube/Instagram compatibility.
+yt-dlp>=2025.1.1
+
+# Environment variable loading
+python-dotenv==1.0.0
+
+# Async HTTP client (fallback image downloader)
+aiohttp==3.9.0
+
+# gallery-dl is installed separately in Dockerfile (not via pip here)
+# It handles Instagram image posts which yt-dlp does not support.
+# See Dockerfile: RUN pip install gallery-dl
