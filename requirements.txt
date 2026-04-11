@@ -11,6 +11,5 @@ python-dotenv==1.0.0
 # Async HTTP client (fallback image downloader)
 aiohttp==3.9.0
 
-# gallery-dl is installed separately in Dockerfile (not via pip here)
-# It handles Instagram image posts which yt-dlp does not support.
-# See Dockerfile: RUN pip install gallery-dl
+# Instagram session-based media extraction
+instaloader>=4.10
