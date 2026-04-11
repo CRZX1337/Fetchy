@@ -57,7 +57,7 @@ TERM_WIDTH=$(tput cols 2>/dev/null || echo 80)
 # ─────────────────────────────────────────────────────────────────
 divider() {
   local width=$(( TERM_WIDTH < 64 ? TERM_WIDTH - 4 : 60 ))
-  echo -e "  ${DIM}$(printf '%*s' "$width" '' | tr ' ' '─')${RESET}"
+  echo -e "  ${DIM}$(printf '%*s' "$width" '' | tr ' ' '-')${RESET}"
 }
 
 step_ok()   { echo -e "  ${GREEN}✔${RESET}  ${BOLD}$1${RESET}"; }
