@@ -1,6 +1,7 @@
 import yt_dlp
 import os
 import uuid
+import asyncio
 import logging
 import hashlib
 import re
@@ -149,10 +150,15 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
                 logger.info(f"Download complete: {actual_path} ({file_size_mb:.2f} MB)")
                 return actual_path, file_size_mb
             else:
-                # Fallback search
-                files = [os.path.join("downloads", f) for f in os.listdir("downloads")]
-                if files:
-                    actual_path = max(files, key=os.path.getmtime)
+                # Fallback search — filter by unique_id to avoid race conditions
+                # under concurrent downloads, matching only files this task created.
+                matching = [
+                    os.path.join("downloads", f)
+                    for f in os.listdir("downloads")
+                    if unique_id in f
+                ]
+                if matching:
+                    actual_path = matching[0]
                     file_size_mb = os.path.getsize(actual_path) / (1024 * 1024)
                     logger.info(f"Download complete (fallback path): {actual_path} ({file_size_mb:.2f} MB)")
                     return actual_path, file_size_mb
@@ -294,14 +300,48 @@ async def download_instagram_photo(url, index=None):
                 media_type = entry.get('media_type', 'image')
                 file_path = f"downloads/{clean_title}_{short_hash}.{ext}"
 
-                async with session.get(entry['url']) as resp:
-                    if resp.status == 200:
-                        content = await resp.read()
-                        with open(file_path, "wb") as f:
-                            f.write(content)
-                        results.append(file_path)
-                        logger.info(f"Downloaded Instagram {media_type}: {file_path}")
+                # Exponential backoff: up to 3 attempts (2s, 4s, 8s delays)
+                # Honours Retry-After header on HTTP 429 responses.
+                max_attempts = 3
+                downloaded = False
+                for attempt in range(1, max_attempts + 1):
+                    async with session.get(entry['url']) as resp:
+                        if resp.status == 200:
+                            content = await resp.read()
+                            with open(file_path, "wb") as f:
+                                f.write(content)
+                            results.append(file_path)
+                            logger.info(f"Downloaded Instagram {media_type}: {file_path}")
+                            downloaded = True
+                            break
+                        elif resp.status == 429:
+                            retry_after = resp.headers.get("Retry-After")
+                            if retry_after:
+                                wait_time = float(retry_after)
+                                logger.warning(
+                                    f"Instagram rate-limited (429). Respecting Retry-After: {wait_time}s "
+                                    f"(attempt {attempt}/{max_attempts})"
+                                )
+                            else:
+                                wait_time = 2 ** attempt  # 2, 4, 8
+                                logger.warning(
+                                    f"Instagram rate-limited (429). Backing off {wait_time}s "
+                                    f"(attempt {attempt}/{max_attempts})"
+                                )
+                            if attempt < max_attempts:
+                                await asyncio.sleep(wait_time)
+                        else:
+                            logger.warning(
+                                f"Unexpected HTTP {resp.status} for entry {entry['index']} "
+                                f"(attempt {attempt}/{max_attempts})"
+                            )
+                            break  # Non-retryable error; give up on this entry
+
+                if not downloaded:
+                    logger.error(
+                        f"All {max_attempts} attempts exhausted for entry {entry['index']} — skipping."
+                    )
             except Exception as e:
                 logger.error(f"Failed to download photo {entry['index']}: {e}")
-    
+
     return results

@@ -26,10 +26,40 @@ active_downloads = {}  # user_id -> count
 MAX_CONCURRENT_PER_USER = 2
 _user_cooldowns: dict[int, float] = {}
 
+COOLDOWN_SECONDS = 30
+
+
 def check_cooldown(user_id: int) -> int | None:
     """Returns remaining wait seconds if on cooldown, else None."""
     elapsed = time.time() - _user_cooldowns.get(user_id, 0)
-    return int(30 - elapsed) if elapsed < 30 else None
+    return int(COOLDOWN_SECONDS - elapsed) if elapsed < COOLDOWN_SECONDS else None
+
+
+def cleanup_stale_state(now: float) -> dict:
+    """
+    Purge expired cooldown entries and zero-count active_download slots.
+
+    Designed to be called from main.py's cleanup_task without exposing
+    any private variables — this is the ONLY sanctioned way for external
+    code to mutate ui module state.
+
+    Returns a summary dict: {"cooldowns_cleared": int, "stale_downloads_cleared": int}
+    """
+    expired_cooldowns = [
+        uid for uid, t in _user_cooldowns.items() if now - t > COOLDOWN_SECONDS
+    ]
+    for uid in expired_cooldowns:
+        del _user_cooldowns[uid]
+
+    stale_slots = [uid for uid, count in active_downloads.items() if count <= 0]
+    for uid in stale_slots:
+        del active_downloads[uid]
+
+    return {
+        "cooldowns_cleared": len(expired_cooldowns),
+        "stale_downloads_cleared": len(stale_slots),
+    }
+
 
 class SupportInformationEmbed(discord.Embed):
     """Custom embed for supported sites."""
@@ -313,7 +343,7 @@ async def process_action(interaction: discord.Interaction, url: str, format_type
         if file_size_mb > 10.0:
             download_url = generate_file_token(file_path)
             embed.title = "💾 File Ready (Large)"
-            embed.description = f"This file was too large for Discord (>10MB).\n[**Click here to Download**]({download_url})\n\n*(File expires in 24 hours)*"
+            embed.description = f"This file was too large for Discord (>10MB).\n[**Click here to Download**]({download_url})\n\n*(File expires in 1 hour)*"
             embed.color = discord.Color.green()
             await interaction.edit_original_response(embed=embed, view=None)
         else:

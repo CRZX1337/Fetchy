@@ -49,7 +49,7 @@ async def _handle_download(request: web.Request) -> web.Response:
             content_type="application/json",
             text='{"error": "Token expired"}'
         )
-    # Token stays alive for re-downloads within the 24 h window
+    # Token stays alive for re-downloads within the 1 h window
     return web.FileResponse(filepath)
 
 
@@ -94,30 +94,34 @@ class MediaBot(commands.Bot):
         await self.change_presence(activity=discord.Game(name=self.statuses[self.status_index]))
         self.status_index = (self.status_index + 1) % len(self.statuses)
 
-    @tasks.loop(hours=24)
+    @tasks.loop(hours=1)
     async def cleanup_task(self):
-        logger.info("Running 24-hour cleanup task...")
+        logger.info("Running cleanup task...")
         count = 0
-        if os.path.exists("downloads"):
-            for filename in os.listdir("downloads"):
-                file_path = os.path.join("downloads", filename)
+        downloads_dir = "downloads"
+        if os.path.exists(downloads_dir) and any(os.scandir(downloads_dir)):
+            for filename in os.listdir(downloads_dir):
+                file_path = os.path.join(downloads_dir, filename)
                 try:
                     if os.path.isfile(file_path):
-                        if time.time() - os.path.getmtime(file_path) > 86400:
+                        if time.time() - os.path.getmtime(file_path) > 3600:
                             os.remove(file_path)
                             count += 1
                 except Exception as e:
                     logger.error(f"Failed to delete {file_path}: {e}")
-        logger.info(f"Cleanup finished. Deleted {count} files.")
+            logger.info(f"Cleanup finished. Deleted {count} files.")
+        else:
+            logger.info("Cleanup skipped: downloads/ is empty or does not exist.")
 
-        # Clean up expired cooldown entries
-        now = time.time()
-        expired_cooldowns = [uid for uid, t in ui._user_cooldowns.items() if now - t > 30]
-        for uid in expired_cooldowns:
-            del ui._user_cooldowns[uid]
-        logger.info(f"Cleared {len(expired_cooldowns)} expired cooldown entries.")
+        # Delegate ui state cleanup to ui module (FIX 7 — no internals exposed here)
+        ui_summary = ui.cleanup_stale_state(time.time())
+        logger.info(
+            f"UI state cleanup: {ui_summary['cooldowns_cleared']} cooldowns, "
+            f"{ui_summary['stale_downloads_cleared']} stale download counters cleared."
+        )
 
         # Clean up expired file tokens
+        now = time.time()
         expired_tokens = [t for t, (_, exp) in file_server._file_tokens.items() if now > exp]
         for t in expired_tokens:
             del file_server._file_tokens[t]
@@ -132,10 +136,17 @@ class MediaBot(commands.Bot):
         logger.info(f"Targeting Channel ID: {CONFIG['CHANNEL_ID']}")
         channel = self.get_channel(CONFIG["CHANNEL_ID"])
         if channel:
-            try:
-                await channel.purge(limit=100)
-            except Exception:
-                pass
+            # FIX 5: check manage_messages before attempting purge
+            if channel.permissions_for(channel.guild.me).manage_messages:
+                try:
+                    await channel.purge(limit=100)
+                except Exception as exc:
+                    logger.warning(f"channel.purge() failed even with permission: {exc}")
+            else:
+                logger.warning(
+                    "Skipping startup purge: bot lacks 'Manage Messages' in "
+                    f"channel {channel.id}. Grant the permission and restart to enable this."
+                )
             embed = discord.Embed(
                 title=f"📥 {BOT_NAME} | Your Personal Media Assistant",
                 description="I am here to assist you with high-performance media extraction and management. Enjoy a fully private and anonymous experience across all your interactions.\n\nHow to get started:\n1. Select a format below (Video, Audio, or Picture).\n2. Provide the source link in the secure input field.\n3. Choose your quality/format and I'll handle the rest! 🚀\n\n\n✨ Key Benefits: High Performance - Large File Support - Zero Tracking\n\n🖥️ Source Code: [GitHub Repository](https://github.com/CRZX1337/Fetchy)",
@@ -171,9 +182,19 @@ class MediaBot(commands.Bot):
 # --- BOT ENTRYPOINT ---
 if __name__ == "__main__":
     load_dotenv()
-    token = os.getenv("DISCORD_TOKEN") or os.getenv("DISCORD_BOT_TOKEN")
+    # FIX 3: canonical env var is DISCORD_BOT_TOKEN.
+    # DISCORD_TOKEN is deprecated — warn users so they can migrate their .env.
+    token = os.getenv("DISCORD_BOT_TOKEN")
     if not token:
-        logger.critical("No DISCORD_TOKEN or DISCORD_BOT_TOKEN found in your .env file!")
+        legacy_token = os.getenv("DISCORD_TOKEN")
+        if legacy_token:
+            logger.warning(
+                "DISCORD_TOKEN is deprecated. Please rename it to DISCORD_BOT_TOKEN "
+                "in your .env file. Falling back for this session."
+            )
+            token = legacy_token
+    if not token:
+        logger.critical("No DISCORD_BOT_TOKEN found in your .env file!")
     else:
         bot = MediaBot()
         bot.run(token)
