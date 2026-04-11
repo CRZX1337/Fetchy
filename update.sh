@@ -60,7 +60,7 @@ require_command() {
 }
 
 # ─────────────────────────────────────────────
-#  SPINNER  (used while waiting for background jobs)
+#  SPINNER
 # ─────────────────────────────────────────────
 SPINNER_PID=""
 SPINNER_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
@@ -89,15 +89,12 @@ spinner_stop() {
 
 # ─────────────────────────────────────────────
 #  BACKGROUND RUNNER
-#  Kicks off a command in background, returns its PID.
-#  Errors are written to a temp file.
 # ─────────────────────────────────────────────
 BG_LOG="/tmp/fetchy_bg_$$.log"
-BG_STATUS="/tmp/fetchy_status_$$"   # directory — each job writes <name>.ok or <name>.fail
+BG_STATUS="/tmp/fetchy_status_$$"
 mkdir -p "$BG_STATUS"
 
 bg_run() {
-  # bg_run <name> <cmd...>
   local name="$1"; shift
   (
     if "$@" >> "$BG_LOG" 2>&1; then
@@ -106,11 +103,9 @@ bg_run() {
       echo "$?" > "${BG_STATUS}/${name}.fail"
     fi
   ) &
-  echo $!   # return PID
+  echo $!
 }
 
-# Wait for a background job to finish; spinner runs while waiting.
-# If the job fails, print error and exit 1.
 bg_wait() {
   local name="$1" pid="$2" label="$3"
   spinner_start "$label"
@@ -126,6 +121,70 @@ bg_wait() {
 }
 
 # ─────────────────────────────────────────────
+#  CHANGELOG DISPLAY
+#  Shows commits pulled since BEFORE_SHA.
+#  Categories derived from conventional commit prefixes.
+# ─────────────────────────────────────────────
+show_changelog() {
+  local before_sha="$1"
+  local after_sha
+  after_sha=$(git rev-parse HEAD)
+
+  if [[ "$before_sha" == "$after_sha" ]]; then
+    echo -e "  ${DIM}Already up to date — no new commits.${RESET}"
+    echo ""
+    return
+  fi
+
+  # Collect new commits: hash|subject
+  local commits
+  commits=$(git log --pretty=format:"%h|⁠%s" "${before_sha}..${after_sha}" 2>/dev/null || true)
+
+  if [[ -z "$commits" ]]; then
+    echo -e "  ${DIM}No commit details available.${RESET}"
+    echo ""
+    return
+  fi
+
+  local count
+  count=$(echo "$commits" | wc -l | tr -d ' ')
+
+  echo -e "  ${BOLD}$(c 39)ℹ${RESET}  ${BOLD}${count} new commit$([ "$count" -ne 1 ] && echo 's' || true) pulled:${RESET}"
+  echo ""
+
+  while IFS='|' read -r hash subject; do
+    # Strip zero-width joiner we used as delimiter guard
+    subject="${subject//$'\u2060'/}"
+    local icon color
+    # Assign icon + color by conventional commit prefix
+    case "$subject" in
+      feat*|feature*)   icon="✨" ; color="$(c 84)"  ;;
+      fix*|bugfix*)     icon="🐛" ; color="$(c 203)" ;;
+      docs*)            icon="📖" ; color="$(c 75)"  ;;
+      refactor*)        icon="♻️ " ; color="$(c 141)" ;;
+      perf*)            icon="⚡" ; color="$(c 214)" ;;
+      chore*|ci*|build*)icon="🔧" ; color="$(c 245)" ;;
+      test*)            icon="🧪" ; color="$(c 111)" ;;
+      style*)           icon="🎨" ; color="$(c 219)" ;;
+      revert*)          icon="⏪" ; color="$(c 196)" ;;
+      *)                icon="▸"  ; color="$(c 252)" ;;
+    esac
+
+    # Truncate subject if too long
+    local max_len=$(( TERM_WIDTH - 18 ))
+    if (( ${#subject} > max_len )); then
+      subject="${subject:0:$max_len}…"
+    fi
+
+    printf "  ${DIM}%s${RESET}  %s ${color}%s${RESET}\n" \
+      "$hash" "$icon" "$subject"
+    sleep 0.05
+  done <<< "$commits"
+
+  echo ""
+}
+
+# ─────────────────────────────────────────────
 #  CLEANUP ON EXIT
 # ─────────────────────────────────────────────
 cleanup() {
@@ -137,7 +196,7 @@ trap 'cleanup; echo -e "\n${RED}${BOLD}  ✘ Update aborted (line $LINENO).${RES
 trap 'cleanup' EXIT
 
 # ─────────────────────────────────────────────
-#  ANIMATED BANNER  (purely visual, no real work here)
+#  ANIMATED BANNER
 # ─────────────────────────────────────────────
 clear
 BANNER_COLORS=(51 45 39 33 27 21)
@@ -165,7 +224,7 @@ divider
 echo ""
 
 # ─────────────────────────────────────────────
-#  [1/4]  PRE-FLIGHT  —  runs instantly, no background needed
+#  [1/4]  PRE-FLIGHT
 # ─────────────────────────────────────────────
 echo -e "  ${BOLD}$(c 39)[1/4]${RESET}  ${BRIGHT_WHITE}Pre-flight Checks${RESET}"
 echo ""
@@ -182,6 +241,8 @@ fi
 step_ok "docker-compose.yml found"
 
 CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || git rev-parse --short HEAD)
+# Save SHA BEFORE pull so we can diff later
+BEFORE_SHA=$(git rev-parse HEAD)
 step_info "Current version: ${BOLD}${CURRENT_VERSION}${RESET}"
 
 echo ""
@@ -189,15 +250,13 @@ divider
 echo ""
 
 # ─────────────────────────────────────────────
-#  [2/4]  GIT PULL  —  fire in background, animate, then wait
+#  [2/4]  GIT PULL
 # ─────────────────────────────────────────────
 echo -e "  ${BOLD}$(c 39)[2/4]${RESET}  ${BRIGHT_WHITE}Pulling Latest Changes${RESET}"
 echo ""
 
-# Kick off git pull immediately in the background
 GIT_PID=$(bg_run "git_pull" git pull --ff-only)
 
-# Animate while it runs (typewriter fakes activity)
 printf "  ${DIM}"
 typewriter "Contacting remote repository..." 0.03
 printf "  ${DIM}"
@@ -205,22 +264,23 @@ typewriter "Checking for new commits..." 0.025
 printf "  ${DIM}"
 typewriter "Verifying integrity..." 0.03
 
-# Now block until git pull is actually done
 bg_wait "git_pull" "$GIT_PID" "Syncing with remote repository"
 echo ""
+
+# ——— CHANGELOG: show what just got pulled ———
+show_changelog "$BEFORE_SHA"
+
 divider
 echo ""
 
 # ─────────────────────────────────────────────
-#  [3/4]  DOCKER BUILD  —  longest step, fire first
+#  [3/4]  DOCKER BUILD
 # ─────────────────────────────────────────────
 echo -e "  ${BOLD}$(c 39)[3/4]${RESET}  ${BRIGHT_WHITE}Rebuilding Docker Image${RESET}"
 echo ""
 
-# Fire docker build immediately — it’s the slowest step
 BUILD_PID=$(bg_run "docker_build" sudo docker compose build)
 
-# Long fake animation while docker is crunching
 printf "  ${DIM}"
 typewriter "Pulling base layers..." 0.04
 printf "  ${DIM}"
@@ -232,7 +292,6 @@ typewriter "Applying patches..." 0.04
 printf "  ${DIM}"
 typewriter "Optimising layer cache..." 0.03
 
-# Wait for docker build to finish (spinner takes over if animation was faster)
 bg_wait "docker_build" "$BUILD_PID" "Building Docker infrastructure"
 echo ""
 divider
