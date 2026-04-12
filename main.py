@@ -4,6 +4,7 @@ import os
 import asyncio
 import aiohttp
 import time
+import sys
 from aiohttp import web
 from discord.ext import commands, tasks
 import re
@@ -51,6 +52,35 @@ async def start_server():
     logger.info("Token-authenticated file server started on port 8080.")
 
 
+async def auto_update_ytdlp():
+    """Silently update yt-dlp to the latest version on startup."""
+    try:
+        import yt_dlp
+        old_version = yt_dlp.version.__version__
+        logger.info(f"yt-dlp current version: {old_version} — checking for updates...")
+
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "pip", "install", "-U", "yt-dlp",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode == 0:
+            # Reload to get new version string
+            import importlib
+            importlib.reload(yt_dlp.version)
+            new_version = yt_dlp.version.__version__
+            if new_version != old_version:
+                logger.info(f"yt-dlp updated: {old_version} -> {new_version}")
+            else:
+                logger.info(f"yt-dlp is already up to date ({new_version})")
+        else:
+            logger.warning(f"yt-dlp update failed (exit {proc.returncode}): {stderr.decode().strip()}")
+    except Exception as e:
+        logger.warning(f"yt-dlp auto-update skipped: {e}")
+
+
 def build_dashboard_embed() -> discord.Embed:
     """Returns the standard Fetchy dashboard embed."""
     embed = discord.Embed(
@@ -94,13 +124,16 @@ class MediaBot(commands.Bot):
         self.status_index = 0
         self.statuses = [
             "Watching for links... 🔍",
-            "Ready to download! 📽️",
+            "Ready to download! 🎥",
             "Helping users fetch media! ✨",
             "Type a link to get started! 🔗"
         ]
         self._dashboard_posted = False
 
     async def setup_hook(self):
+        # Auto-update yt-dlp before anything else
+        await auto_update_ytdlp()
+
         self.add_view(DashboardView())
         self.status_rotation.start()
         self.cleanup_task.start()
@@ -110,6 +143,10 @@ class MediaBot(commands.Bot):
         from cogs.admin import Admin
         await self.add_cog(General(self))
         await self.add_cog(Admin(self))
+
+        # Sync slash commands globally
+        await self.tree.sync()
+        logger.info("Slash commands synced.")
 
         logger.info("Bot setup completed.")
 
