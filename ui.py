@@ -13,7 +13,6 @@ from file_server import generate_file_token
 
 
 def is_valid_url(url: str) -> bool:
-    """Validates if a string is a proper http/https URL."""
     try:
         parsed = urllib.parse.urlparse(url)
         return parsed.scheme in ("http", "https") and bool(parsed.netloc)
@@ -25,29 +24,23 @@ def is_valid_url(url: str) -> bool:
 logger = logging.getLogger("MediaBot.UI")
 
 # --- RATE LIMITING ---
-active_downloads = {}   # user_id -> count
+active_downloads = {}
 MAX_CONCURRENT_PER_USER = 2
 _user_cooldowns: dict[int, float] = {}
 COOLDOWN_SECONDS = 30
 
 # --- PER-USER DOWNLOAD QUEUE ---
-# user_id -> asyncio.Queue of coroutine callables
 _user_queues: dict[int, asyncio.Queue] = defaultdict(lambda: asyncio.Queue())
-_queue_workers: dict[int, asyncio.Task] = {}  # user_id -> running worker task
+_queue_workers: dict[int, asyncio.Task] = {}
 MAX_QUEUE_PER_USER = 3
 
 
 def check_cooldown(user_id: int) -> int | None:
-    """Returns remaining wait seconds if on cooldown, else None."""
     elapsed = time.time() - _user_cooldowns.get(user_id, 0)
     return int(COOLDOWN_SECONDS - elapsed) if elapsed < COOLDOWN_SECONDS else None
 
 
 def cleanup_stale_state(now: float) -> dict:
-    """
-    Purge expired cooldown entries and zero-count active_download slots.
-    Returns a summary dict.
-    """
     expired_cooldowns = [
         uid for uid, t in _user_cooldowns.items() if now - t > COOLDOWN_SECONDS
     ]
@@ -65,7 +58,6 @@ def cleanup_stale_state(now: float) -> dict:
 
 
 def _is_instagram_post(url: str) -> bool:
-    """Returns True for Instagram posts, carousels, reels and stories URLs."""
     return any(p in url for p in (
         "instagram.com/p/",
         "instagram.com/reel/",
@@ -74,12 +66,22 @@ def _is_instagram_post(url: str) -> bool:
     ))
 
 
+def _platform_embed_color(url: str) -> int:
+    """Returns a hex color int for the platform of the given URL."""
+    return downloader.get_platform(url)["color"]
+
+
+def _platform_footer(url: str) -> str:
+    """Returns a footer string with platform emoji + name."""
+    p = downloader.get_platform(url)
+    return f"{p['emoji']} {p['name']}"
+
+
 # ─────────────────────────────────────────────
 #  QUEUE WORKER
 # ─────────────────────────────────────────────
 
 async def _queue_worker(user_id: int):
-    """Processes download jobs for a single user sequentially."""
     queue = _user_queues[user_id]
     while True:
         job = await queue.get()
@@ -90,29 +92,21 @@ async def _queue_worker(user_id: int):
         finally:
             queue.task_done()
         if queue.empty():
-            # Remove worker when queue is drained
             _queue_workers.pop(user_id, None)
             break
 
 
 async def _enqueue_download(user_id: int, job_coro_fn, position_callback=None):
-    """
-    Adds a download job to the user's queue.
-    job_coro_fn: an async callable (no args) that performs the download.
-    position_callback: optional async callable(position) to notify user of queue position.
-    Returns False if queue is full.
-    """
     queue = _user_queues[user_id]
     if queue.qsize() >= MAX_QUEUE_PER_USER:
         return False
 
-    position = queue.qsize() + 1  # 1 = next up, 2 = second in line, etc.
+    position = queue.qsize() + 1
     await queue.put(job_coro_fn)
 
     if position_callback and position > 1:
         await position_callback(position)
 
-    # Start worker if not already running
     if user_id not in _queue_workers or _queue_workers[user_id].done():
         _queue_workers[user_id] = asyncio.create_task(_queue_worker(user_id))
 
@@ -124,11 +118,10 @@ async def _enqueue_download(user_id: int, job_coro_fn, position_callback=None):
 # ─────────────────────────────────────────────
 
 class PreviewView(discord.ui.View):
-    """Shows a media preview embed with Confirm / Cancel buttons."""
-
     def __init__(self, url: str, format_type: str, quality: str = "1080",
                  extension: str = None, trigger_message_id: int = None,
-                 prompt_message_id: int = None):
+                 prompt_message_id: int = None,
+                 start_time: str = None, end_time: str = None):
         super().__init__(timeout=60)
         self.url = url
         self.format_type = format_type
@@ -136,6 +129,8 @@ class PreviewView(discord.ui.View):
         self.extension = extension
         self.trigger_message_id = trigger_message_id
         self.prompt_message_id = prompt_message_id
+        self.start_time = start_time
+        self.end_time = end_time
         self._confirmed = False
 
     @discord.ui.button(label="⬇️ Download", style=discord.ButtonStyle.success)
@@ -150,6 +145,8 @@ class PreviewView(discord.ui.View):
             quality=self.quality, extension=self.extension,
             trigger_message_id=self.trigger_message_id,
             prompt_message_id=self.prompt_message_id,
+            start_time=self.start_time,
+            end_time=self.end_time,
         )
 
     @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.danger)
@@ -160,15 +157,14 @@ class PreviewView(discord.ui.View):
         )
 
     async def on_timeout(self):
-        """Silently disable buttons on timeout — message already sent ephemerally."""
         if not self._confirmed:
             self.stop()
 
 
 async def show_preview(interaction: discord.Interaction, url: str, format_type: str,
                        quality: str = "1080", extension: str = None,
-                       trigger_message_id: int = None, prompt_message_id: int = None):
-    """Fetches preview metadata and shows a confirm/cancel embed."""
+                       trigger_message_id: int = None, prompt_message_id: int = None,
+                       start_time: str = None, end_time: str = None):
     if not interaction.response.is_done():
         await interaction.response.send_message("🔍 **Fetching preview...** Please wait.", ephemeral=True)
 
@@ -177,7 +173,6 @@ async def show_preview(interaction: discord.Interaction, url: str, format_type: 
         await interaction.edit_original_response(content="❌ Couldn't fetch preview. Try downloading directly.")
         return
 
-    # If it's a playlist, route directly to playlist handler
     if info['is_playlist']:
         await interaction.edit_original_response(
             content=(
@@ -191,10 +186,12 @@ async def show_preview(interaction: discord.Interaction, url: str, format_type: 
         )
         return
 
+    platform = downloader.get_platform(url)
     title_short = info['title'][:60] + "..." if len(info['title']) > 60 else info['title']
+
     embed = discord.Embed(
-        title=f"📄 {title_short}",
-        color=discord.Color.blurple()
+        title=f"{platform['emoji']} {title_short}",
+        color=platform['color']
     )
     if info['thumbnail']:
         embed.set_thumbnail(url=info['thumbnail'])
@@ -203,12 +200,19 @@ async def show_preview(interaction: discord.Interaction, url: str, format_type: 
     if info['duration']:
         embed.add_field(name="⏱️ Duration", value=info['duration'], inline=True)
     embed.add_field(name="📦 Format", value=f"`{format_type}`", inline=True)
-    embed.set_footer(text="This preview expires in 60 seconds")
+
+    # Show trim info in preview if set
+    if start_time or end_time:
+        trim_str = f"`{start_time or '0:00'}` → `{end_time or 'end'}`"
+        embed.add_field(name="✂️ Trim", value=trim_str, inline=False)
+
+    embed.set_footer(text=f"{platform['emoji']} {platform['name']} · Preview expires in 60s")
 
     view = PreviewView(
         url=url, format_type=format_type, quality=quality,
         extension=extension, trigger_message_id=trigger_message_id,
-        prompt_message_id=prompt_message_id
+        prompt_message_id=prompt_message_id,
+        start_time=start_time, end_time=end_time,
     )
     await interaction.edit_original_response(content=None, embed=embed, view=view)
 
@@ -218,7 +222,6 @@ async def show_preview(interaction: discord.Interaction, url: str, format_type: 
 # ─────────────────────────────────────────────
 
 class PlaylistCancelView(discord.ui.View):
-    """Cancel button for ongoing playlist downloads."""
     def __init__(self, cancel_event: threading.Event):
         super().__init__(timeout=None)
         self.cancel_event = cancel_event
@@ -238,15 +241,16 @@ async def handle_playlist_download(
     quality: str = "1080",
     extension: str = "mp3",
 ):
-    """Handles downloading an entire playlist, uploading files one by one."""
     cancel_event = threading.Event()
     cancel_view = PlaylistCancelView(cancel_event)
 
+    platform = downloader.get_platform(url)
     embed = discord.Embed(
         title=f"💼 {BOT_NAME} | Playlist Download",
         description="⏳ Starting playlist download...",
-        color=discord.Color.yellow()
+        color=platform['color']
     )
+    embed.set_footer(text=f"{platform['emoji']} {platform['name']}")
     await interaction.edit_original_response(embed=embed, view=cancel_view)
 
     delivered = 0
@@ -329,7 +333,6 @@ async def _delete_after(path: str, delay: float):
 # ─────────────────────────────────────────────
 
 class SupportInformationEmbed(discord.Embed):
-    """Custom embed for supported sites."""
     def __init__(self):
         super().__init__(
             title="❓ Supported Platforms",
@@ -343,12 +346,67 @@ class SupportInformationEmbed(discord.Embed):
 
 
 # ─────────────────────────────────────────────
+#  AUDIO TRIM MODAL
+# ─────────────────────────────────────────────
+
+class AudioTrimModal(discord.ui.Modal, title="✂️ Trim Audio"):
+    """
+    Modal that collects start/end timestamps for audio trimming.
+    Shown after the user picks an audio format.
+    """
+    start_input = discord.ui.TextInput(
+        label="Start Time (optional)",
+        placeholder="e.g. 0:30 or 1:15:00 — leave blank for beginning",
+        required=False,
+        max_length=12,
+    )
+    end_input = discord.ui.TextInput(
+        label="End Time (optional)",
+        placeholder="e.g. 2:45 or 3:00:00 — leave blank for full end",
+        required=False,
+        max_length=12,
+    )
+
+    def __init__(self, url: str, extension: str,
+                 trigger_message_id: int = None, prompt_message_id: int = None):
+        super().__init__()
+        self.url = url
+        self.extension = extension
+        self.trigger_message_id = trigger_message_id
+        self.prompt_message_id = prompt_message_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        start = self.start_input.value.strip() or None
+        end = self.end_input.value.strip() or None
+
+        # Validate timestamps if provided
+        if start and downloader._parse_timestamp(start) is None:
+            await interaction.response.send_message(
+                "❌ Invalid start time. Use format `1:30` or `90`.", ephemeral=True
+            )
+            return
+        if end and downloader._parse_timestamp(end) is None:
+            await interaction.response.send_message(
+                "❌ Invalid end time. Use format `2:45` or `165`.", ephemeral=True
+            )
+            return
+
+        await show_preview(
+            interaction, self.url, "audio",
+            extension=self.extension,
+            trigger_message_id=self.trigger_message_id,
+            prompt_message_id=self.prompt_message_id,
+            start_time=start,
+            end_time=end,
+        )
+
+
+# ─────────────────────────────────────────────
 #  START ANALYSIS
 # ─────────────────────────────────────────────
 
 async def start_analysis(interaction: discord.Interaction, url: str, format_requested: str,
                          trigger_message_id: int = None, prompt_message_id: int = None):
-    """Core logic to analyze a link and present the next selection view."""
     if not interaction.response.is_done():
         await interaction.response.send_message("🔍 **Analyzing content...** Please wait.", ephemeral=True)
 
@@ -373,17 +431,27 @@ async def start_analysis(interaction: discord.Interaction, url: str, format_requ
         await interaction.edit_original_response(content="❌ **Oops!** I couldn't analyze that link. Is it the right format?")
         return
 
+    platform = downloader.get_platform(url)
     title_short = info['title'][:50] + "..." if len(info['title']) > 50 else info['title']
 
     if format_requested == "video":
         view = QualitySelectView(url, info['heights'], trigger_message_id, prompt_message_id)
-        await interaction.edit_original_response(content=f"🎥 **Found:** *{title_short}*\nSelect Your Video Quality:", view=view)
+        await interaction.edit_original_response(
+            content=f"{platform['emoji']} **Found:** *{title_short}*\nSelect Your Video Quality:",
+            view=view
+        )
     elif format_requested == "audio":
         view = AudioFormatView(url, trigger_message_id, prompt_message_id)
-        await interaction.edit_original_response(content=f"🎵 **Found:** *{title_short}*\nSelect Audio Format:", view=view)
+        await interaction.edit_original_response(
+            content=f"{platform['emoji']} **Found:** *{title_short}*\nSelect Audio Format:",
+            view=view
+        )
     elif format_requested == "picture":
         view = PictureFormatView(url, trigger_message_id, prompt_message_id)
-        await interaction.edit_original_response(content=f"🖼️ **Found:** *{title_short}*\nSelect Image Format:", view=view)
+        await interaction.edit_original_response(
+            content=f"{platform['emoji']} **Found:** *{title_short}*\nSelect Image Format:",
+            view=view
+        )
 
 
 # ─────────────────────────────────────────────
@@ -391,7 +459,6 @@ async def start_analysis(interaction: discord.Interaction, url: str, format_requ
 # ─────────────────────────────────────────────
 
 class InstagramCarouselView(discord.ui.View):
-    """View for selecting photos from an Instagram carousel."""
     def __init__(self, url: str, entries: list, trigger_message_id=None, prompt_message_id=None):
         super().__init__(timeout=300)
         self.url = url
@@ -464,7 +531,6 @@ class InstagramCarouselView(discord.ui.View):
 
 
 class QualitySelectView(discord.ui.View):
-    """Dynamic quality selection based on available resolutions."""
     def __init__(self, url: str, heights: list, trigger_message_id: int = None, prompt_message_id: int = None):
         super().__init__(timeout=180)
         self.url = url
@@ -501,7 +567,7 @@ class QualitySelectView(discord.ui.View):
 
 
 class AudioFormatView(discord.ui.View):
-    """Format selection for Audio."""
+    """Format selection for Audio — after selection opens the Trim modal."""
     def __init__(self, url: str, trigger_message_id: int = None, prompt_message_id: int = None):
         super().__init__(timeout=180)
         self.url = url
@@ -518,15 +584,18 @@ class AudioFormatView(discord.ui.View):
         ]
     )
     async def select_format(self, interaction: discord.Interaction, select: discord.ui.Select):
-        await show_preview(
-            interaction, self.url, "audio", extension=select.values[0],
+        ext = select.values[0]
+        # Open trim modal — user can leave both fields blank to skip trimming
+        modal = AudioTrimModal(
+            url=self.url,
+            extension=ext,
             trigger_message_id=self.trigger_message_id,
-            prompt_message_id=self.prompt_message_id
+            prompt_message_id=self.prompt_message_id,
         )
+        await interaction.response.send_modal(modal)
 
 
 class PictureFormatView(discord.ui.View):
-    """Format selection for Pictures."""
     def __init__(self, url: str, trigger_message_id: int = None, prompt_message_id: int = None):
         super().__init__(timeout=180)
         self.url = url
@@ -550,7 +619,6 @@ class PictureFormatView(discord.ui.View):
 
 
 class CancelView(discord.ui.View):
-    """Single Cancel button shown during active downloads."""
     def __init__(self, cancel_event: threading.Event):
         super().__init__(timeout=None)
         self.cancel_event = cancel_event
@@ -570,9 +638,9 @@ class CancelView(discord.ui.View):
 async def process_action(
     interaction: discord.Interaction, url: str, format_type: str,
     quality: str = "1080", extension: str = None,
-    trigger_message_id: int = None, prompt_message_id: int = None
+    trigger_message_id: int = None, prompt_message_id: int = None,
+    start_time: str = None, end_time: str = None,
 ):
-    """Queued download processor with rate limiting and status updates."""
     user_id = interaction.user.id
 
     wait = check_cooldown(user_id)
@@ -584,7 +652,6 @@ async def process_action(
             content=f"⏳ Please wait **{wait}s** before starting a new download."
         )
 
-    # Try to enqueue
     async def _notify_position(position: int):
         msg = f"🟡 You're **#{position} in queue** — your download will start soon!"
         if interaction.response.is_done():
@@ -595,7 +662,8 @@ async def process_action(
     async def _run_download():
         await _execute_download(
             interaction, url, format_type, quality, extension or "mp3",
-            trigger_message_id, prompt_message_id
+            trigger_message_id, prompt_message_id,
+            start_time=start_time, end_time=end_time,
         )
 
     accepted = await _enqueue_download(user_id, _run_download, _notify_position)
@@ -607,29 +675,26 @@ async def process_action(
             await interaction.response.send_message(msg, ephemeral=True)
         return
 
-    # If queue was empty, worker starts immediately — no extra message needed
-    queue_size = _user_queues[user_id].qsize()
-    if queue_size == 0 and not interaction.response.is_done():
-        # Job is already running, response will come from _execute_download
-        pass
-
 
 async def _execute_download(
     interaction: discord.Interaction, url: str, format_type: str,
     quality: str, extension: str,
-    trigger_message_id: int = None, prompt_message_id: int = None
+    trigger_message_id: int = None, prompt_message_id: int = None,
+    start_time: str = None, end_time: str = None,
 ):
-    """Internal: actually runs the download and handles delivery."""
     user_id = interaction.user.id
     active_downloads[user_id] = active_downloads.get(user_id, 0) + 1
     _user_cooldowns[user_id] = time.time()
 
+    platform = downloader.get_platform(url)
+
     try:
         embed = discord.Embed(
-            title=f"📥 {BOT_NAME} | Working...",
+            title=f"{platform['emoji']} {BOT_NAME} | Working...",
             description="🔍 Locating media...",
-            color=discord.Color.yellow()
+            color=platform['color']
         )
+        embed.set_footer(text=f"{platform['emoji']} {platform['name']}")
         cancel_event = threading.Event()
         cancel_view = CancelView(cancel_event)
         loop = asyncio.get_running_loop()
@@ -665,7 +730,8 @@ async def _execute_download(
             asyncio.run_coroutine_threadsafe(update_status_ui(status), loop)
 
         file_path, file_size_mb = await asyncio.to_thread(
-            downloader.download_media, url, format_type, quality, extension, status_callback, cancel_event
+            downloader.download_media, url, format_type, quality, extension,
+            status_callback, cancel_event, start_time, end_time
         )
 
         if not file_path:
@@ -673,7 +739,7 @@ async def _execute_download(
 
         if file_size_mb > 10.0:
             download_url = generate_file_token(file_path)
-            embed.title = "💾 File Ready (Large)"
+            embed.title = f"{platform['emoji']} File Ready (Large)"
             embed.description = (
                 f"This file was too large for Discord (>10MB).\n"
                 f"[**Click here to Download**]({download_url})\n\n"
@@ -687,7 +753,7 @@ async def _execute_download(
             await interaction.followup.send(
                 content=f"✨ **Here is your {format_type}!** Enjoy!", file=file, ephemeral=True
             )
-            embed.title = "✅ Complete!"
+            embed.title = f"{platform['emoji']} Complete!"
             embed.description = "Your file has been delivered privately to you. 🔐"
             embed.color = discord.Color.green()
             await interaction.edit_original_response(embed=embed, view=None)
@@ -734,7 +800,6 @@ async def _execute_download(
 # ─────────────────────────────────────────────
 
 class DownloadModal(discord.ui.Modal):
-    """Prompt for a URL when no link was auto-detected."""
     def __init__(self, format_type):
         super().__init__(title=f"Manually Download {format_type.capitalize()}")
         self.format_type = format_type
@@ -760,7 +825,6 @@ class DownloadModal(discord.ui.Modal):
 
 
 class DashboardView(discord.ui.View):
-    """The central interactive hub for Fetchy."""
     def __init__(self, url=None, trigger_message_id=None):
         super().__init__(timeout=None)
         self.url = url

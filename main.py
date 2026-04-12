@@ -27,7 +27,6 @@ from constants import BOT_NAME
 
 # --- TOKEN-AUTHENTICATED FILE SERVER ---
 async def _handle_download(request: web.Request) -> web.Response:
-    """Serve files only to callers that present a valid, unexpired token."""
     token = request.rel_url.query.get("token")
     if not token:
         return web.Response(status=403, content_type="application/json", text='{"error": "Missing token"}')
@@ -42,7 +41,6 @@ async def _handle_download(request: web.Request) -> web.Response:
 
 
 async def start_server():
-    """Starts an aiohttp server with token-based file serving on port 8080."""
     app = web.Application()
     app.router.add_get('/downloads', _handle_download)
     runner = web.AppRunner(app)
@@ -53,7 +51,6 @@ async def start_server():
 
 
 async def auto_update_ytdlp():
-    """Silently update yt-dlp to the latest version on startup."""
     try:
         import yt_dlp
         old_version = yt_dlp.version.__version__
@@ -67,7 +64,6 @@ async def auto_update_ytdlp():
         stdout, stderr = await proc.communicate()
 
         if proc.returncode == 0:
-            # Reload to get new version string
             import importlib
             importlib.reload(yt_dlp.version)
             new_version = yt_dlp.version.__version__
@@ -82,7 +78,6 @@ async def auto_update_ytdlp():
 
 
 def build_dashboard_embed() -> discord.Embed:
-    """Returns the standard Fetchy dashboard embed."""
     embed = discord.Embed(
         title=f"📥 {BOT_NAME} — Media Downloader",
         description="Your personal, private media assistant. Drop a link or pick a format below.",
@@ -99,6 +94,16 @@ def build_dashboard_embed() -> discord.Embed:
     embed.add_field(
         name="🎯 Supported formats",
         value="🎥 Video · 🎵 Audio · 🖼️ Picture",
+        inline=False
+    )
+    embed.add_field(
+        name="✂️ New: Audio Trim",
+        value="Pick Audio → choose format → set start/end time!",
+        inline=False
+    )
+    embed.add_field(
+        name="🎬 New: /clip",
+        value="Cut any video/audio to a specific timestamp range!",
         inline=False
     )
     embed.add_field(
@@ -126,14 +131,13 @@ class MediaBot(commands.Bot):
             "Watching for links... 🔍",
             "Ready to download! 🎥",
             "Helping users fetch media! ✨",
-            "Type a link to get started! 🔗"
+            "Type a link to get started! 🔗",
+            "Try /clip to cut a video! ✂️",
         ]
         self._dashboard_posted = False
 
     async def setup_hook(self):
-        # Auto-update yt-dlp before anything else
         await auto_update_ytdlp()
-
         self.add_view(DashboardView())
         self.status_rotation.start()
         self.cleanup_task.start()
@@ -144,10 +148,68 @@ class MediaBot(commands.Bot):
         await self.add_cog(General(self))
         await self.add_cog(Admin(self))
 
-        # Sync slash commands globally
+        # Register /clip slash command
+        @self.tree.command(name="clip", description="✂️ Download a clip from any URL with start/end timestamps")
+        @discord.app_commands.describe(
+            url="The media URL (YouTube, TikTok, etc.)",
+            start="Start time, e.g. 1:30 or 90",
+            end="End time, e.g. 2:45 or 165",
+            format="Output format: mp4 (video) or mp3/wav/m4a (audio)",
+        )
+        async def clip_command(
+            interaction: discord.Interaction,
+            url: str,
+            start: str,
+            end: str,
+            format: str = "mp4",
+        ):
+            if not ui.is_valid_url(url):
+                await interaction.response.send_message("❌ Invalid URL.", ephemeral=True)
+                return
+
+            start_sec = downloader._parse_timestamp(start)
+            end_sec = downloader._parse_timestamp(end)
+
+            if start_sec is None:
+                await interaction.response.send_message(
+                    "❌ Invalid start time. Use format `1:30` or `90`.", ephemeral=True
+                )
+                return
+            if end_sec is None:
+                await interaction.response.send_message(
+                    "❌ Invalid end time. Use format `2:45` or `165`.", ephemeral=True
+                )
+                return
+            if end_sec <= start_sec:
+                await interaction.response.send_message(
+                    "❌ End time must be after start time.", ephemeral=True
+                )
+                return
+
+            format = format.lower().strip()
+            if format in ("mp4", "webm"):
+                format_type = "video"
+                extension = "mp3"  # not used for video
+            else:
+                format_type = "audio"
+                extension = format if format in ("mp3", "wav", "flac", "m4a") else "mp3"
+
+            platform = downloader.get_platform(url)
+            await interaction.response.send_message(
+                f"{platform['emoji']} **Clipping** `{start}` → `{end}` from {platform['name']}...",
+                ephemeral=True
+            )
+
+            await ui.process_action(
+                interaction, url, format_type,
+                quality="1080",
+                extension=extension,
+                start_time=start,
+                end_time=end,
+            )
+
         await self.tree.sync()
         logger.info("Slash commands synced.")
-
         logger.info("Bot setup completed.")
 
     @tasks.loop(seconds=CONFIG.get("STATUS_ROTATION_SPEED", 10))
@@ -229,7 +291,6 @@ class MediaBot(commands.Bot):
         await self.process_commands(message)
 
     async def on_command_error(self, ctx, error):
-        """Silently ignore unknown !commands."""
         if isinstance(error, commands.CommandNotFound):
             return
         raise error

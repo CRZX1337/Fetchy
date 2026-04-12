@@ -46,6 +46,58 @@ def _find_and_fix_picture(base: str, wanted_ext: str) -> str | None:
     return None
 
 
+def _parse_timestamp(ts: str) -> float | None:
+    """
+    Parses a timestamp string like '1:30', '1:30:00' or '90' into seconds.
+    Returns None if invalid.
+    """
+    ts = ts.strip()
+    try:
+        parts = ts.split(":")
+        if len(parts) == 1:
+            return float(parts[0])
+        elif len(parts) == 2:
+            return int(parts[0]) * 60 + float(parts[1])
+        elif len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+    except (ValueError, IndexError):
+        return None
+    return None
+
+
+def get_platform(url: str) -> dict:
+    """
+    Returns platform metadata (name, emoji, color) based on URL.
+    Color is a discord.Color-compatible integer (hex).
+    """
+    u = url.lower()
+    if "tiktok.com" in u:
+        return {"name": "TikTok", "emoji": "🎵", "color": 0x010101}
+    if "youtube.com" in u or "youtu.be" in u:
+        return {"name": "YouTube", "emoji": "▶️", "color": 0xFF0000}
+    if "instagram.com" in u:
+        return {"name": "Instagram", "emoji": "📸", "color": 0xE1306C}
+    if "twitter.com" in u or "x.com" in u:
+        return {"name": "X / Twitter", "emoji": "🐦", "color": 0x1DA1F2}
+    if "soundcloud.com" in u:
+        return {"name": "SoundCloud", "emoji": "🔊", "color": 0xFF5500}
+    if "spotify.com" in u:
+        return {"name": "Spotify", "emoji": "🎧", "color": 0x1DB954}
+    if "reddit.com" in u or "redd.it" in u:
+        return {"name": "Reddit", "emoji": "🤖", "color": 0xFF4500}
+    if "facebook.com" in u or "fb.watch" in u:
+        return {"name": "Facebook", "emoji": "📘", "color": 0x1877F2}
+    if "twitch.tv" in u:
+        return {"name": "Twitch", "emoji": "🟣", "color": 0x9146FF}
+    if "vimeo.com" in u:
+        return {"name": "Vimeo", "emoji": "🎬", "color": 0x1AB7EA}
+    if "pinterest.com" in u:
+        return {"name": "Pinterest", "emoji": "📌", "color": 0xE60023}
+    if "bandcamp.com" in u:
+        return {"name": "Bandcamp", "emoji": "🎸", "color": 0x1DA0C3}
+    return {"name": "Web", "emoji": "🌐", "color": 0x5865F2}
+
+
 def get_media_info(url):
     logger.info(f"Extracting info for {url}")
     ydl_opts = {'quiet': True, 'no_warnings': True}
@@ -101,7 +153,6 @@ def get_preview_info(url):
 
 
 def _build_ydl_opts(format_type, quality, extension, output_tpl, progress_handler):
-    """Builds yt-dlp options dict for the given format type."""
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
@@ -115,12 +166,10 @@ def _build_ydl_opts(format_type, quality, extension, output_tpl, progress_handle
 
 
 def _apply_format(ydl_opts, url, format_type, quality, extension):
-    """Applies format-specific options to ydl_opts in-place."""
     is_tiktok = "tiktok.com" in url
 
     if format_type == "video":
         if is_tiktok:
-            # Broad chain: h264 first (usually watermark-free on TikTok), then any best
             ydl_opts['format'] = (
                 'bestvideo[vcodec^=h264]+bestaudio/'
                 'bestvideo+bestaudio/'
@@ -149,10 +198,6 @@ def _apply_format(ydl_opts, url, format_type, quality, extension):
 
 
 def _resolve_output(base, unique_id, format_type, extension):
-    """
-    Determines the actual output file path after download.
-    Returns (path, size_mb) or raises if not found.
-    """
     if format_type == "audio":
         p = f"{base}.{extension}"
         if os.path.exists(p):
@@ -164,12 +209,10 @@ def _resolve_output(base, unique_id, format_type, extension):
             return p, os.path.getsize(p) / (1024 * 1024)
 
     elif format_type == "picture":
-        # FFmpegThumbnailsConvertor sometimes leaves .image / .webp — fix it
         p = _find_and_fix_picture(base, extension)
         if p:
             return p, os.path.getsize(p) / (1024 * 1024)
 
-    # Generic fallback: any file with unique_id in name
     folder = "downloads"
     matching = [os.path.join(folder, f) for f in os.listdir(folder) if unique_id in f]
     if matching:
@@ -185,10 +228,13 @@ def _resolve_output(base, unique_id, format_type, extension):
     raise Exception("File not found after successful download.")
 
 
-def download_media(url, format_type, quality="1080", extension="mp3", status_hook=None, cancel_event: threading.Event = None):
+def download_media(url, format_type, quality="1080", extension="mp3", status_hook=None,
+                   cancel_event: threading.Event = None,
+                   start_time: str = None, end_time: str = None):
     """
-    Downloads media from a URL. Retries up to _DOWNLOAD_RETRIES times on
-    transient network/DNS errors. Returns (file_path, file_size_mb).
+    Downloads media from a URL. Optionally trims audio/video to [start_time, end_time].
+    Retries up to _DOWNLOAD_RETRIES times on transient network/DNS errors.
+    Returns (file_path, file_size_mb).
     """
     logger.info(f"Downloading {format_type} from {url} (Quality: {quality}, Ext: {extension})")
 
@@ -238,6 +284,39 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
         ydl_opts = _build_ydl_opts(format_type, quality, extension, output_tpl, progress_handler)
         _apply_format(ydl_opts, url, format_type, quality, extension)
 
+        # Audio trim via FFmpeg postprocessor
+        if (start_time or end_time) and format_type in ("audio", "video"):
+            start_sec = _parse_timestamp(start_time) if start_time else None
+            end_sec = _parse_timestamp(end_time) if end_time else None
+            pp_args = []
+            if start_sec is not None:
+                pp_args += ["-ss", str(start_sec)]
+            if end_sec is not None:
+                if start_sec is not None:
+                    pp_args += ["-t", str(end_sec - start_sec)]
+                else:
+                    pp_args += ["-to", str(end_sec)]
+            if pp_args:
+                existing_pps = ydl_opts.get('postprocessors', [])
+                ydl_opts['postprocessors'] = existing_pps + [{
+                    'key': 'FFmpegPostProcessor',
+                    'preferedformat': extension if format_type == 'audio' else 'mp4',
+                    'args': pp_args,
+                }]
+                # For audio trim, use FFmpegExtractAudio with external time args
+                # Simpler: use download_ranges instead (yt-dlp native)
+                ydl_opts.pop('postprocessors', None)  # remove manual pp
+                ydl_opts['download_ranges'] = yt_dlp.utils.download_range_func(
+                    None,
+                    [{
+                        "start_time": start_sec if start_sec is not None else 0,
+                        "end_time": end_sec if end_sec is not None else float('inf'),
+                    }]
+                )
+                ydl_opts['force_keyframes_at_cuts'] = True
+                # Re-apply format postprocessors after clearing
+                _apply_format(ydl_opts, url, format_type, quality, extension)
+
         try:
             if status_hook is not None and attempt == 1:
                 status_hook({"phase": "SEARCHING"})
@@ -266,7 +345,6 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
                 "timed out",
                 "errno -2",
                 "transporterror",
-                "cancelled by user",
             ))
             if "cancelled by user" in err_str:
                 raise
@@ -274,7 +352,6 @@ def download_media(url, format_type, quality="1080", extension="mp3", status_hoo
                 logger.warning(f"Network error on attempt {attempt}/{_DOWNLOAD_RETRIES}: {e} — retrying in {_RETRY_DELAY}s")
                 time.sleep(_RETRY_DELAY)
                 continue
-            # Non-network error or last attempt
             break
 
     logger.error(f"download_media failed after {_DOWNLOAD_RETRIES} attempts: {last_error}")
